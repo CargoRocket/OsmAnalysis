@@ -131,6 +131,20 @@ streets %>%
 
 Nur ca. 95% der Straßen haben *keinen* Wert für `smoothness`.
 
+Wie viele Radwege haben eine Angabe zur Breite?
+
+```{r}
+streets$width <- str_match(streets$other_tags, '\"width\"=>\"\\s*(.*?)\\s*\"')[,2]
+
+streets %>% 
+  filter(highway == "cycleway") %>% 
+  mutate(has_width = !is.na(width)) %>% 
+  tabyl(has_width)
+```
+
+Ca. 9% der Radwege haben eine Angabe zur Breite.
+
+
 ## Kartendarstellung
 
 Reduziere auf die Fläche von Stuttgart (für Performance)
