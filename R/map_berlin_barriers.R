@@ -48,4 +48,4 @@ m <- mapdeck(style = mapdeck_style("light")) %>%
                   tooltip = "barrier",
                   update_view = T)
 
-mapshot(m, here("html", paste0(city, "_bollards.html")))
+mapview::mapshot(m, here("html", paste0(city, "_bollards.html")))
