@@ -1,0 +1,175 @@
+---
+title: "OpenStreetMap Tags in Baden-Württemberg"
+author: "Alexandra Kapp"
+output:
+  html_document:
+    theme: "cosmo"
+    ourput_dir: "/docs"
+---
+
+```{r setup, echo=FALSE, results = "hide", message = FALSE}
+# lade packages
+library(sf) # für Geodaten 
+library(magrittr) # pipe operator
+library(tidyr) # Data cleaning: (z.B. pivot_wider)
+library(dplyr) # Tabellen bearbeiten (z.B. muatate, count)
+library(stringr) # einfachere String Bearbeitung
+library(janitor) # zur schöneren Darstellung von häufigkeiten (statt table())
+library(mapdeck) # für Kartendarstellung
+library(here)
+source(here("R", "env.R"))
+set_token(mapbox_key)
+```
+
+# Analyse der relavanten OSM Tags in Baden-Württemberg
+
+- Downloade die Baden-Württemberg PBF Datei von Geofabrik in speichere diese im Ordner `data` (top level) ab: 
+  - https://download.geofabrik.de/europe/germany/baden-wuerttemberg.html
+
+## Barrieren 
+
+Lade und analysiere die Barrieren:
+
+```{r}
+# Laden der Daten kann einen Moment dauern
+barriers <- read_sf(here("data", "baden-wuerttemberg-latest.osm.pbf"), 
+                    layer = "points",
+                    query = "SELECT * FROM points WHERE BARRIER <> '' ")
+
+# extrahiere width und maxwidth von "other tags"
+barriers$maxwidth <- str_match(barriers$other_tags, '\"maxwidth\"=>\"\\s*(.*?)\\s*\"')[,2]
+barriers$width <- str_match(barriers$other_tags, '\"width\"=>\"\\s*(.*?)\\s*\"')[,2]
+
+# welche Barrieren gibt es wie häufig?
+barriers %>% 
+  tabyl("barrier") %>% 
+  arrange(desc(n)) %>% 
+  janitor::adorn_pct_formatting()
+```
+
+Wie viele der Barrieren haben ein `width` Tag?
+
+```{r}
+with_width <- barriers %>% filter(!is.na(width) | !is.na(maxwidth))
+
+print(paste("Anzahl aller Barrieren mit width oder maxwidth:", nrow(with_width)))
+print(paste("Anzahl aller Barrieren:", nrow(barriers)))
+print(paste("Prozent mit width oder maxwidth", round(nrow(with_width) / nrow(barriers) * 100, 1), "%"))
+```
+
+Wie viele der fünf häufigsten Barrieren haben einen `width` Tag?
+```{r}
+barriers %>% 
+  st_drop_geometry() %>% 
+  mutate(has_width = !is.na(dplyr::coalesce(maxwidth, width))) %>% 
+  select(barrier, has_width) %>% 
+  filter(barrier %in% c("gate", "bollard", "cycle_barrier", "lift_gate", "block")) %>% 
+  count(barrier, has_width) %>% 
+  pivot_wider(names_from = has_width, values_from = n) %>% 
+  mutate(`Anteil mit width in %` = round(`TRUE`/(`FALSE` + `TRUE`)*100, 1))
+```
+
+Alle Arten von Barrieren haben kaum den Tag `width` vergeben - nur 0.5% - 2.5% haben je nach Kategorie diesen Tag.
+
+## Straßenoberfläche
+
+Lade Straßen aus dem PBF File und extrahiere notwendige Tags aus `other_tags`.
+
+```{r}
+# Laden der Daten kann einen Moment dauern
+streets <- read_sf(here("data", "baden-wuerttemberg-latest.osm.pbf"), 
+                   layer = "lines",
+                   query = "SELECT * FROM lines WHERE highway <> ''")
+
+streets$bicycle <- str_match(streets$other_tags, '\"bicycle\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$motorroad <- str_match(streets$other_tags, '\"motorroad\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$surface <- str_match(streets$other_tags, '\"surface\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$smoothness <- str_match(streets$other_tags, '\"smoothness\"=>\"\\s*(.*?)\\s*\"')[,2]
+```
+
+Filtere nur Straßen, die auch von Fahrrädern befahren werden können.
+
+```{r}
+print(paste("Anzahl alle Straßen:", nrow(streets)))
+
+streets <- streets %>% 
+  filter(highway != "motorway",
+  highway != "motorway_link",
+  highway != "trunk",
+  highway != "trunk_link",
+  (highway != "pedestrian") | (bicycle == "yes"),
+  highway != "footway" | bicycle == "yes",
+  highway != "steps",
+  highway != "corridor",
+  motorroad != "yes" | is.na(motorroad))
+  
+print(paste("Anzahl relevante Straßen:", nrow(streets)))
+```
+
+Wie viel Prozent der Straßen haben eine Angabe zu Straßenoberfläche?
+
+```{r}
+streets %>% 
+  tabyl(surface) %>% 
+  adorn_pct_formatting() %>% 
+  arrange(desc(n)) %>% 
+  rename("Oberfläche" = "surface_ogr_geometry_") %>% 
+  head(10)
+```
+
+Ungefähr 40% der Straßen haben eine Angabe zur Oberfläche. Davon hat die Hälfte der Straßen den Wert "Aspalt".
+
+Wie viel Prozent der Straßen haben eine Angabe zur Smoothness?
+
+```{r}
+streets %>% 
+  tabyl(smoothness) %>% 
+  adorn_pct_formatting() %>% 
+  arrange(desc(n)) %>% 
+  head(10)
+```
+
+Nur ca. 95% der Straßen haben *keinen* Wert für `smoothness`.
+
+## Kartendarstellung
+
+Reduziere auf die Fläche von Stuttgart (für Performance)
+Reduziere die Kategorien der Barrieren und Straßenoberfläche für eine bessere Darstellung
+
+```{r}
+# für performance nur Stuttgart darstellen
+stgt <- read_sf(here("data", "stuttgart.geojson"))
+stgt_streets <- streets[sf::st_intersects(streets, stgt, sparse = F)[,1], ]
+stgt_barriers <- barriers[sf::st_intersects(barriers, stgt, sparse = F)[,1], ]
+
+stgt_barriers$barrier_simple <- stgt_barriers$barrier
+stgt_barriers[!stgt_barriers$barrier_simple %in% c("gate", "bollard", "cycle_barrier", "lift_gate", "block") &
+           !is.na(stgt_barriers$barrier_simple), "barrier_simple"] <- "other"
+
+stgt_streets$surface_simple <- stgt_streets$surface
+stgt_streets[stgt_streets$surface_simple %in% c("unpaved", "compacted", "fine_gravel", "rock", "grass", "ground", "gravel", "dirt",
+                       "pebblestone", "earth", "grass_paver", "mud", "sand", "woodchips"), "surface_simple"] <- "unpaved"
+stgt_streets[stgt_streets$surface_simple %in% c("sett", "cobblestone", "unhewn_cobblestone"), "surface_simple"] <- "cobblestone"
+stgt_streets[!stgt_streets$surface_simple %in% c("asphalt", "concrete", "paved", "paving_stopnes", "unpaved", "cobblestone") & !is.na(stgt_streets$surface_simple), "surface_simple"] <- "other"
+```
+
+
+```{r}
+center <- c(9.177, 48.7766)
+stgt_barriers$radius <- ifelse(stgt_barriers$barrier == "cycle_barrier", 10, 5) # mache cycle_barriers größer
+
+mapdeck(style = mapdeck_style("light"),
+        location = center,
+                  zoom = 12) %>%
+  add_path(data = stgt_streets, stroke_colour = "surface_simple",
+           stroke_width = 8, legend = T, tooltip = "surface", update_view = F) %>%
+  add_scatterplot(data = stgt_barriers,
+                  radius = "radius",
+                  fill_colour = "barrier_simple",
+                  palette =  "plasma",
+                  legend = T,
+                  tooltip = "barrier",
+                  update_view = T)
+```
+
+
