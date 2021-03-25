@@ -44,7 +44,7 @@ streets$width_cleaned <- gsub("[^0-9.-]", "",  streets$width) %>% as.numeric()
 # round(100  - (colSums(is.na(streets)) / nrow(streets) * 100), 1)
 colSums(!is.na(streets))
 
-streets_selection <- streets %>% 
+streets <- streets %>% 
   filter((bicycle != "no") | is.na(bicycle),
          ! access %in% c("agricultural", "customers", "delivery", "private", 
                          "permit", "bus", "public_transport", "emergency", "forestry"),
@@ -245,8 +245,7 @@ streets <- streets %>%
 xhain <- read_sf(here("data", "bezirke.geojson")) %>% 
    filter(name == "Friedrichshain-Kreuzberg")
 streets_xhain <- streets[st_intersects(streets, xhain, sparse = F)[,1],] %>% 
-  select(-waterway, -aerialway, -barrier, -man_made, -z_order, -other_tags, ) %>% 
-  select(cargoindex_surface, cargoindex_barrier, cargoindex_width)
+  select(-waterway, -aerialway, -barrier, -man_made, -z_order, -other_tags, - incline_across, - width)
 
 m <- mapview(streets_xhain, zcol = "cargoindex_surface", layer.name = "surface", 
         color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
