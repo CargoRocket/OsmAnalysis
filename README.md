@@ -8,6 +8,6 @@ Scripts to analyse and visualize OSM tags.
 
 Work in progress:
 
-[First version for a map of surface, barrier and with classification in XHain](https://cargorocket.github.io/OsmAnalysis/docs/xhain_index.html)
+[First version for a map of surface, barrier and with classification in XHain](https://cargorocket.github.io/OsmAnalysis/docs/xhain_index)
   - From 0: not passible to 10: perfect for cargo bikes
   
