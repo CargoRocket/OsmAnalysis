@@ -5,9 +5,11 @@ library(mapdeck)
 library(sf)
 library(here)
 library(stringr)
+library(hereR)
 
 source(here("R", "env.R"))
 set_token(mapbox_key)
+hereR::set_key(here_key)
 mapviewOptions(fgb = FALSE)
 
 # ----------------------------------------------------- #
@@ -55,7 +57,7 @@ streets <- streets %>%
   filter((bicycle != "no") | is.na(bicycle),
          ! access %in% c("agricultural", "customers", "delivery", "private", 
                          "permit", "bus", "public_transport", "emergency", "forestry"),
-         ! bicycle %in% c("private") %>% 
+         ! bicycle %in% c("private"),
          highway != "motorway", #Autobahn
          highway != "motorway_link", #Autobahnauffahrt
          highway != "trunk", #Schnellstraße
@@ -165,16 +167,45 @@ streets <- streets %>%
 ## Querneigung
 # TODO
 
-#streets %>% 
-#  filter(has_cycle_barrier | has_bollards | has_block) %>% 
-#  mapview() + filter(barriers, barrier %in% c("bollard", "block", "cycle_barrier"))
-
 ## Car traffic
-# TODO: get car traffic
+# for testing only get traffic for xhain
+xhain <- read_sf(here("data", "bezirke.geojson")) %>% 
+  filter(name == "Friedrichshain-Kreuzberg")
+traffic_xhain <- hereR::flow(xhain)
+traffic_xhain <- traffic_xhain %>% 
+  mutate(traffic_index = 10 - JF) %>% 
+  st_transform(3035) %>% 
+  st_buffer(5) # set 5 m buffer
+
+# TODO: map car traffic onto osm streets
+streets_with_traffic <- streets %>% 
+  st_transform(3035) %>% 
+  st_within(traffic_xhain, sparse = F) 
+
+streets_with_traffic <- streets[streets_with_traffic[,1], ]%>% 
+  select(osm_id, traffic_index) %>% 
+  st_drop_geometry()
+
+streets <- streets %>% 
+  left_join(streets_with_traffic, by = "osm_id")
+
+# do you have to cycle on the car road here?
+streets <- streets %>% 
+  mutate (cycle_on_road = case_when (
+  bicycle %in% c("designated", "use_sidepath") ~ F,
+  cycleway == "no" | cycleway == "none" ~ T,
+  cycleway_right == "no" | cycleway_right == "none" ~ T,
+  cycleway_left == "no" | cycleway_left == "none" ~ T,
+  (!is.na(cycleway) | !is.na(cycleway_right) | !is.na(cycleway_left)) ~ F,
+  TRUE ~ T
+  )
+)
 
 ## pedestrian traffic
-# TODO: rate Fussgaengerzonen
-# TODO: get traffic on shared streets
+# TODO: 
+# - get traffic on shared streets
+# - include market places & opening hours
+# - use heuristics: avoid saturday / (sundays -> in parks) afternoons on pedestrian roads
 
 
 # --------------------------------------------------------- #
@@ -197,10 +228,10 @@ streets <- streets %>%
       cycleway_both == "separate" ~ 10,
       cycleway_left == "separate" ~ 10,
       cycleway_right == "separate" ~ 10,
-      cycleway == "shared_busway" ~ 8,
-      cycleway_both == "shared_busway" ~ 8,
-      cycleway_right == "shared_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
-      cycleway_left == "shared_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
+      cycleway == "share_busway" ~ 8,
+      cycleway_both == "share_busway" ~ 8,
+      cycleway_right == "share_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
+      cycleway_left == "share_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
       cycleway == "opposite_lane" ~ 10, # own lane on oneway streets
       cycleway == "opposite" ~ 8, # no own lane on oneway streets - how should this be rated?
       oneway_bicycle == "yes" ~ 8, #  how should this be rated?
@@ -274,7 +305,8 @@ streets <- streets %>%
       highway == "pedestrian" ~ 5, # Fußgängerzone
       highway == "footway" ~ 5, # Gehweg Fahrrad frei
       segregated == "no" ~ 5 # keine Trennung von Fuß- und Gehweg
-    )
+    ),
+    cargoindex_traffic = ifelse(cycle_on_road, traffic_index, NA)
   )
 
 # prefer roads in parks
@@ -304,7 +336,7 @@ xhain <- read_sf(here("data", "bezirke.geojson")) %>%
 streets_xhain <- streets[st_intersects(streets, xhain, sparse = F)[,1],] %>% 
   select(-waterway, -aerialway, -barrier, -man_made, -z_order, -other_tags, - incline_across, - width)
 
-m <- mapview(select(streets_xhain, c(name, highway, cycleway, cycleway_right, cycleway_left, cycleway_both, bicycle, use_sidepath, segregated,
+m <- mapview(select(streets_xhain, c(name, highway, cycle_on_road, cycleway, cycleway_right, cycleway_left, cycleway_both, bicycle, use_sidepath, segregated,
                                      oneway_bicycle, oneway, oneway_bicycle, bicycle_road, maxspeed_cleaned, cargoindex_cycleways)), zcol = "cargoindex_cycleways", layer.name = "cycleways", 
         color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
   mapview(select(streets_xhain, c(name, highway, surface, smoothness, cycleway_surface, cycleway_smoothness, cargoindex_surface)), zcol = "cargoindex_surface", layer.name = "surface", 
@@ -314,8 +346,12 @@ m <- mapview(select(streets_xhain, c(name, highway, cycleway, cycleway_right, cy
           color = colorRampPalette(c("red", "orange", "yellow"))) +
   mapview(select(filter(streets_xhain, !is.na(cargoindex_width)), c(name, highway, width_cleaned, cargoindex_width)), zcol = "cargoindex_width", layer.name = "width", 
           color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
-  mapview(select(filter(streets_xhain, !is.na(cargoindex_pedestrians)), c(name, highway, segregated, bicycle, cargoindex_pedestrians)), zcol = "cargoindex_pedestrians", layer.name = "pedestrian traffic", 
-          color = colorRampPalette(c("red", "orange")))
-  
+  mapview(select(filter(streets_xhain, !is.na(cargoindex_pedestrians)), c(name, highway, segregated, bicycle, cargoindex_pedestrians)), 
+          zcol = "cargoindex_pedestrians", layer.name = "pedestrian traffic", 
+          color = colorRampPalette(c("red", "orange"))) + 
+  mapview(traffic_xhain, zcol = "JF", layer.name = "car traffic", 
+          color = colorRampPalette(c("darkgreen", "yellow", "red")))
+  #mapview(select(streets_xhain, c(name, highway, cycle_on_road, traffic_index, cargoindex_traffic)), zcol = "cargoindex_traffic",  
+  #               color = colorRampPalette(c("red", "yellow", "darkgreen")), layer.name = "car traffic")
 
 mapshot(m, "docs/xhain_index.html", selfcontained = F)
