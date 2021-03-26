@@ -29,16 +29,23 @@ streets$motorroad <- str_match(streets$other_tags, '\"motorroad\"=>\"\\s*(.*?)\\
 streets$surface <- str_match(streets$other_tags, '\"surface\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$cycleway_surface <- str_match(streets$other_tags, '\"cycleway:surface\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$smoothness <- str_match(streets$other_tags, '\"smoothness\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$cycleway_smoothness <- str_match(streets$other_tags, '\"cycleway:smoothness\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$access <- str_match(streets$other_tags, '\"access\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$oneway <- str_match(streets$other_tags, '\"oneway\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$oneway_bicycle <- str_match(streets$other_tags, '\"oneway:bicycle\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$cycleway_right_oneway <- str_match(streets$other_tags, '\"cycleway:right:oneway\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$cycleway_left_oneway <- str_match(streets$other_tags, '\"cycleway:left:oneway\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$is_sidepath <- str_match(streets$other_tags, '\"is_sidepath\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$use_sidepath <- str_match(streets$other_tags, '\"use_sidepath\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$bicycle_road <- str_match(streets$other_tags, '\"bicycle_road\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$embedded_rails <- str_match(streets$other_tags, '\"embedded_rails\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$maxspeed <- str_match(streets$other_tags, '\"maxspeed\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$incline_across <- str_match(streets$other_tags, '\"incline:across\"=>\"\\s*(.*?)\\s*\"')[,2] # proposed tag
+streets$traffic <- str_match(streets$other_tags, '\"traffic\"=>\"\\s*(.*?)\\s*\"')[,2]
+streets$segregated <- str_match(streets$other_tags, '\"segregated\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$width <- str_match(streets$other_tags, '\"width\"=>\"\\s*(.*?)\\s*\"')[,2]
 streets$width_cleaned <- gsub("[^0-9.-]", "",  streets$width) %>% as.numeric()
+streets$maxspeed_cleaned <- gsub("[^0-9.-]", "",  streets$maxspeed) %>% as.numeric()
 
 # how often do all these tags occur
 # round(100  - (colSums(is.na(streets)) / nrow(streets) * 100), 1)
@@ -48,6 +55,7 @@ streets <- streets %>%
   filter((bicycle != "no") | is.na(bicycle),
          ! access %in% c("agricultural", "customers", "delivery", "private", 
                          "permit", "bus", "public_transport", "emergency", "forestry"),
+         ! bicycle %in% c("private") %>% 
          highway != "motorway", #Autobahn
          highway != "motorway_link", #Autobahnauffahrt
          highway != "trunk", #Schnellstraße
@@ -174,7 +182,54 @@ streets <- streets %>%
 
 streets <- streets %>%
   mutate(
-    cargoindex_surface = case_when(
+    cargoindex_cycleways = case_when(
+      bicycle_road == "yes" ~ 10,
+      highway == "cycleway" ~ 10,
+      cycleway == "track" ~ 10,
+      cycleway_both == "track" ~ 10,
+      cycleway_right == "track" ~ 10, # TODO:this should be be displayed for both directions seperately!
+      cycleway_left == "track" ~ 10, # TODO:this should be be displayed for both directions seperately!
+      cycleway == "lane" ~ 10, # should this be worse than track?
+      cycleway_both == "lane" ~ 10, # should this be worse than track?
+      cycleway_right == "lane" ~ 10, # TODO:this should be be displayed for both directions seperately!
+      cycleway_left == "lane" ~ 10, # TODO:this should be be displayed for both directions seperately!
+      cycleway == "separate" ~ 10,
+      cycleway_both == "separate" ~ 10,
+      cycleway_left == "separate" ~ 10,
+      cycleway_right == "separate" ~ 10,
+      cycleway == "shared_busway" ~ 8,
+      cycleway_both == "shared_busway" ~ 8,
+      cycleway_right == "shared_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
+      cycleway_left == "shared_busway" ~ 8, # TODO:this should be be displayed for both directions seperately!
+      cycleway == "opposite_lane" ~ 10, # own lane on oneway streets
+      cycleway == "opposite" ~ 8, # no own lane on oneway streets - how should this be rated?
+      oneway_bicycle == "yes" ~ 8, #  how should this be rated?
+      maxspeed <= 30 | highway == "residential" | highway == "living_street" ~ 7 , # 30 kmh zones
+      highway == "path" ~ 5,
+      highway == "service" ~ 5,
+      cycleway == "shared" ~ 5, # bike shares lanes with traffic
+      maxspeed >= 50 ~ 3,
+      TRUE ~ 3 # main roads without any bike infrastrukture
+      # TODO: two way cycleways?
+    ),
+    # TODO: properly distinguish between cycleway, right, left and road
+    cargoindex_surface = case_when( # first: test if cycleway attributes are present. Then check general smoothness
+      cycleway_smoothness == "excellent" ~ 10,
+      cycleway_smoothness == "good" ~ 9,
+      cycleway_smoothness == "intermediate" ~ 5,
+      cycleway_smoothness == "bad" ~ 3,
+      cycleway_smoothness == "very bad" ~ 1,
+      cycleway_smoothness == "horrible" ~ 1,
+      cycleway_smoothness == "very horrible" ~ 1,
+      cycleway_smoothness == "impassable" ~ 0,
+      cycleway_surface == "asphalt" ~ 10,
+      cycleway_surface == "paving_stones" ~ 9,
+      cycleway_surface == "concrete" ~ 9,
+      cycleway_surface == "sett" ~ 3,
+      cycleway_surface == "cobblestone" ~ 3,
+      cycleway_surface == "unhewn_cobblestone" ~ 1,
+      cycleway_surface %in% c("unpaved", "compacted", "fine_gravel", "rock", "grass", "ground", "gravel", "dirt",
+                     "pebblestone", "earth", "grass_paver", "mud", "sand", "woodchips") ~ 1,
       smoothness == "excellent" ~ 10,
       smoothness == "good" ~ 9,
       smoothness == "intermediate" ~ 5,
@@ -206,19 +261,21 @@ streets <- streets %>%
       has_bollard & width_bollard < 1.0 ~ 1,
       has_bollard & width_bollard < 1.2 ~ 5,
       has_bollard & width_bollard < 1.5 ~ 7, 
+      has_bollard ~ 9,
       has_block & width_block < 0.9 ~ 0, # default: block is passable if no width given
       has_block & width_block < 1.0 ~ 1,
       has_block & width_block < 1.2 ~ 5,
       has_block & width_block < 1.5 ~ 7,
+      has_block ~ 9,
       has_cycle_barrier & width_cycle_barrier > 1.5 ~ 8
+    ),
+    cargoindex_pedestrians = case_when (
+      bicycle == "dismount" ~ 1,
+      highway == "pedestrian" ~ 5, # Fußgängerzone
+      highway == "footway" ~ 5, # Gehweg Fahrrad frei
+      segregated == "no" ~ 5 # keine Trennung von Fuß- und Gehweg
     )
   )
-
-### prefer bike lanes ??
-# streets[identical(streets$highway, "cycleway"), "cargoindex_cycleway"] <- 1
-# streets[identical(streets$bicycle, "designated"), "cargoindex_cycleway"] <- 1
-# streets[!is.na(streets$cycleway), "cargoindex_cycleway"] <- 0.8
-# streets[is.na(streets$cargoindex_cycleway), "cargoindex_cycleway"] <- 0.5
 
 # prefer roads in parks
 # streets["in_park"] <- st_intersects(streets, st_union(parks$osm_multipolygons), sparse = F)
@@ -232,13 +289,13 @@ streets <- streets %>%
 # ----------------------------------------------------- #
 # combine to a single index ----------------------------  
 
-streets <- streets %>% 
-  rowwise() %>% 
-  mutate(cargoindex = prod(c(cargoindex_width, cargoindex_surface, cargoindex_oneway, 
-                             cargoindex_cycleway, cargoindex_parkroad, 100), na.rm = T)) %>% 
-  st_as_sf() %>% 
-  select(highway, width, surface, cycleway, oneway, oneway.bicycle, cargoindex_width, 
-         cargoindex_surface, cargoindex_oneway, cargoindex_cycleway, cargoindex_parkroad, cargoindex)
+# streets <- streets %>% 
+#   rowwise() %>% 
+#   mutate(cargoindex = prod(c(cargoindex_width, cargoindex_surface, cargoindex_oneway, 
+#                              cargoindex_cycleway, cargoindex_parkroad, 100), na.rm = T)) %>% 
+#   st_as_sf() %>% 
+#   select(highway, width, surface, cycleway, oneway, oneway.bicycle, cargoindex_width, 
+#          cargoindex_surface, cargoindex_oneway, cargoindex_cycleway, cargoindex_parkroad, cargoindex)
 
 
 # only use Xhain for testing
@@ -247,11 +304,18 @@ xhain <- read_sf(here("data", "bezirke.geojson")) %>%
 streets_xhain <- streets[st_intersects(streets, xhain, sparse = F)[,1],] %>% 
   select(-waterway, -aerialway, -barrier, -man_made, -z_order, -other_tags, - incline_across, - width)
 
-m <- mapview(streets_xhain, zcol = "cargoindex_surface", layer.name = "surface", 
+m <- mapview(select(streets_xhain, c(name, highway, cycleway, cycleway_right, cycleway_left, cycleway_both, bicycle, use_sidepath, segregated,
+                                     oneway_bicycle, oneway, oneway_bicycle, bicycle_road, maxspeed_cleaned, cargoindex_cycleways)), zcol = "cargoindex_cycleways", layer.name = "cycleways", 
         color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
-  mapview(filter(streets_xhain, !is.na(cargoindex_barrier)), zcol = "cargoindex_barrier", layer.name = "barrier", 
+  mapview(select(streets_xhain, c(name, highway, surface, smoothness, cycleway_surface, cycleway_smoothness, cargoindex_surface)), zcol = "cargoindex_surface", layer.name = "surface", 
+          color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
+  mapview(select(filter(streets_xhain, !is.na(cargoindex_barrier)), c(name, highway, has_cycle_barrier, has_bollard, has_block, has_lift_gate, has_kerb,
+                                                                      width_cycle_barrier, width_bollard, width_block, cargoindex_barrier)), zcol = "cargoindex_barrier", layer.name = "barrier", 
           color = colorRampPalette(c("red", "orange", "yellow"))) +
-  mapview(filter(streets_xhain, !is.na(cargoindex_width)), zcol = "cargoindex_width", layer.name = "width", 
-          color = colorRampPalette(c("red", "yellow", "darkgreen")))
+  mapview(select(filter(streets_xhain, !is.na(cargoindex_width)), c(name, highway, width_cleaned, cargoindex_width)), zcol = "cargoindex_width", layer.name = "width", 
+          color = colorRampPalette(c("red", "yellow", "darkgreen"))) +
+  mapview(select(filter(streets_xhain, !is.na(cargoindex_pedestrians)), c(name, highway, segregated, bicycle, cargoindex_pedestrians)), zcol = "cargoindex_pedestrians", layer.name = "pedestrian traffic", 
+          color = colorRampPalette(c("red", "orange")))
+  
 
 mapshot(m, "docs/xhain_index.html", selfcontained = F)
