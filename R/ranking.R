@@ -174,7 +174,7 @@ barriers <- barriers %>%
 
 # the intersection with landkreise takes a ~90 seconds
 barriers_intersected <- barriers %>%
-  select(maxwidth_barriers_combined) %>%
+  select(barrier, maxwidth_barriers_combined) %>%
   st_transform(3035) %>% 
   st_intersection(st_transform(landkreise, 3035)) %>% 
   st_transform(4326)
@@ -263,8 +263,8 @@ for (lk in landkreise$kreis_name) {
       data = b_lk,
       group = "Barrieren",
       popup = ~ paste(
-        "Max. Breite:", maxwidth_barriers_combined
-      ),
+        "Barriere:", barrier,
+        "<br>", "Max. Breite:", maxwidth_barriers_combined),
       color = "transparent",
       fillColor = ~ palette_barrier(maxwidth_barriers_combined),
       fillOpacity = 0.8,
