@@ -1,4 +1,5 @@
 */datenrennen_maps/*
+*.Rds
 env.R
 .DS_Store
 *.pbf
