@@ -34,6 +34,7 @@ cycleways <- oe_get(
   force_download = T,
   # force_vectortranslate = TRUE,
   # quiet = F,
+  stringsAsFactors = F,
   max_file_size = 1000000000, # ~ 1GB - default is too small
   extra_tags = extra_tags,
   query = "SELECT * FROM 'lines' WHERE highway = 'cycleway' OR cycleway IN ('track', 'lane', 'opposite_lane') OR cycleway_right IN ('track', 'lane', 'opposite_lane') OR cycleway_left IN ('track', 'lane', 'opposite_lane') OR cycleway_both IN ('track', 'lane', 'opposite_lane')"
