@@ -16,6 +16,7 @@ mapbox_key <- "pk.eyJ1IjoibHhuZHJrcHAiLCJhIjoiY2tuNHBiaWVhMGt5czJvbzBwZXY3aDg3MC
 landkreise <- read_sf(here("data", "bw_landkreise.geojson")) %>%
   select(-regierungsbezirk_id, -klasse, -beginn, -ende)
 destination_path_csv <- here("data", "ranking.csv")
+archive_destination_path_csv <- here("data", paste0(Sys.Date(), "_ranking.csv"))
 path_to_maps <- here("docs", "datenrennen_maps")
 dir.create(path_to_maps, showWarnings = F)
 
@@ -196,17 +197,17 @@ barrier_ranking <- barriers_intersected %>%
 combined_ranking <- cycleway_ranking %>%
   left_join(barrier_ranking, by = "kreis_name") %>%
   mutate(perc_total = round(((3 * count_cycleways - count_missing) + n_with_barrier_maxwidth) /
-    (count_barriers + 3 * count_cycleways) * 100))
-
-# write to csv
-combined_ranking %>%
+    (count_barriers + 3 * count_cycleways) * 100)) %>% 
   select(
     kreis_name, count_cycleways, count_barriers, n_with_width, perc_with_width,
     n_with_surface, perc_with_surface, n_with_smoothness, perc_with_smoothness,
     n_with_barrier_maxwidth, perc_with_barrier_maxwidth, perc_total
   ) %>%
-  arrange(desc(perc_total)) %>%
-  readr::write_csv(destination_path_csv)
+  arrange(desc(perc_total))
+
+# write to csv
+  write_csv(combined_ranking, destination_path_csv)
+  write_csv(combined_ranking, archive_destination_path_csv)
 
 
 # create map --------------------------------------------------------------
