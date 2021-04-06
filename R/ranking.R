@@ -286,5 +286,6 @@ for (lk in landkreise$kreis_name) {
       position = "bottomright", title = "Barrieren (Punkte)"
     )
 
-  saveWidget(m, file.path(path_to_maps, paste(lk, "_map.html")), selfcontained = T)
+  saveWidget(m, file.path(path_to_maps, paste0(lk, "_map.html")),
+             title = paste("Datenrennen", lk), selfcontained = T)
 }
