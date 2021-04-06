@@ -1,0 +1,60 @@
+name: Build and deploy bike-history page
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  github-pages:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [14.x]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Publish
+        uses: nogsantos/scp-deploy@master
+        with:
+          src: ./R/ranking.R
+          host: ${{ secrets.SSH_HOST }}
+          remote: ${{ secrets.SSH_DIR }}
+          port: ${{ secrets.SSH_PORT }}
+          user: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+      - name: Publish
+        uses: nogsantos/scp-deploy@master
+        with:
+          src: ./data*
+          host: ${{ secrets.SSH_HOST }}
+          remote: ${{ secrets.SSH_DIR }}
+          port: ${{ secrets.SSH_PORT }}
+          user: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh/
+          echo "$SSH_KEY" > ~/.ssh/staging.key
+          chmod 600 ~/.ssh/staging.key
+          cat >>~/.ssh/config <<END
+          Host staging
+            HostName $SSH_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/staging.key
+            StrictHostKeyChecking no
+          END
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+      - name: Install Package.json
+        run: |
+          ssh staging 'cd ${{ secrets.SSH_DIR }}'
+      - name: Stop the server
+        run: ssh staging 'sudo /usr/bin/systemctl stop datenrennen.service'
+      - name: Start the server
+        run: ssh staging 'sudo /usr/bin/systemctl start datenrennen.service'
