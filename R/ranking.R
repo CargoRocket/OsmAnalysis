@@ -1,5 +1,5 @@
 install.packages("librarian", quiet = T)
-librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets)
+librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
 
 library(osmextract)
 library(sf)
@@ -9,6 +9,7 @@ library(here)
 library(leaflet)
 library(leafem)
 library(htmlwidgets)
+library(readr)
 
 mapbox_key <- "pk.eyJ1IjoibHhuZHJrcHAiLCJhIjoiY2tuNHBiaWVhMGt5czJvbzBwZXY3aDg3MCJ9.VvzhWzj9LSz0K68lJoBhng"
 
