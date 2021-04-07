@@ -1,5 +1,5 @@
-install.packages("librarian", quiet = T)
-librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
+# install.packages("librarian", quiet = T)
+# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
 
 library(osmextract)
 library(sf)
@@ -34,7 +34,7 @@ cycleways <- oe_get(
   "Baden-Württemberg",
   force_download = T,
   # force_vectortranslate = TRUE,
-  # quiet = F,
+  # quiet = T,
   stringsAsFactors = F,
   max_file_size = 1000000000, # ~ 1GB - default is too small
   extra_tags = extra_tags,
@@ -206,8 +206,12 @@ combined_ranking <- cycleway_ranking %>%
   arrange(desc(perc_total))
 
 # write to csv
-  write_csv(combined_ranking, destination_path_csv)
-  write_csv(combined_ranking, archive_destination_path_csv)
+
+if(file.exists(destination_path_csv)){
+  file.remove(destination_path_csv) # problems with rights to overwrite(?)
+}
+write_csv(combined_ranking, destination_path_csv)
+write_csv(combined_ranking, archive_destination_path_csv)
 
 
 # create map --------------------------------------------------------------
