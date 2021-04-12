@@ -1,5 +1,5 @@
-install.packages("librarian", quiet = T)
-librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
+# install.packages("librarian", quiet = T)
+# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
 
 library(osmextract)
 library(sf)
@@ -34,7 +34,7 @@ cycleways <- oe_get(
   "Baden-Württemberg",
   force_download = T,
   # force_vectortranslate = TRUE,
-  # quiet = F,
+  # quiet = T,
   stringsAsFactors = F,
   max_file_size = 1000000000, # ~ 1GB - default is too small
   extra_tags = extra_tags,
@@ -197,7 +197,7 @@ barrier_ranking <- barriers_intersected %>%
 combined_ranking <- cycleway_ranking %>%
   left_join(barrier_ranking, by = "kreis_name") %>%
   mutate(perc_total = round(((3 * count_cycleways - count_missing) + n_with_barrier_maxwidth) /
-    (count_barriers + 3 * count_cycleways) * 100)) %>% 
+                              (count_barriers + 3 * count_cycleways) * 100)) %>% 
   select(
     kreis_name, count_cycleways, count_barriers, n_with_width, perc_with_width,
     n_with_surface, perc_with_surface, n_with_smoothness, perc_with_smoothness,
@@ -206,8 +206,12 @@ combined_ranking <- cycleway_ranking %>%
   arrange(desc(perc_total))
 
 # write to csv
-  write_csv(combined_ranking, destination_path_csv)
-  write_csv(combined_ranking, archive_destination_path_csv)
+
+if(file.exists(destination_path_csv)){
+  file.remove(destination_path_csv) # problems with rights to overwrite(?)
+}
+write_csv(combined_ranking, destination_path_csv)
+write_csv(combined_ranking, archive_destination_path_csv)
 
 
 # create map --------------------------------------------------------------
@@ -218,15 +222,15 @@ palette_barrier <- colorNumeric(c("#479E8F"), domain = c(0:100), na.color = "#B6
 for (lk in landkreise$kreis_name) {
   cw_lk <- cycleways_intersected %>%
     filter(kreis_name == lk)
-
+  
   b_lk <- barriers_intersected %>%
     filter(kreis_name == lk)
-
+  
   m <- leaflet(cw_lk) %>%
     addLogo("https://cargorocket.de/assets/images/cargorocket-logo.svg",
-      src = "remote",
-      position = "topleft",
-      width = "150px",
+            src = "remote",
+            position = "topleft",
+            width = "150px",
     ) %>%
     fitBounds(st_bbox(cw_lk)[[1]], st_bbox(cw_lk)[[2]], st_bbox(cw_lk)[[3]], st_bbox(cw_lk)[[4]]) %>%
     addTiles(
@@ -285,7 +289,7 @@ for (lk in landkreise$kreis_name) {
       opacity = 0.8,
       position = "bottomright", title = "Barrieren (Punkte)"
     )
-
+  
   saveWidget(m, file.path(path_to_maps, paste0(lk, "_map.html")),
              title = paste("Datenrennen", lk), selfcontained = T)
 }
