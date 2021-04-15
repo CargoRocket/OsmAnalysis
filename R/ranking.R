@@ -406,5 +406,5 @@ for (lk in landkreise$kreis_name) {
     )
 
   saveWidget(m, file.path(path_to_maps, paste0(lk, "_map.html")),
-             title = paste("Datenrennen", lk), selfcontained = T)
+             title = paste("CargoRocket Mapathon", lk), selfcontained = T)
 }
