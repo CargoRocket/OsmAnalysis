@@ -225,19 +225,24 @@ cycleway_ranking <- cycleways_intersected %>%
 barriers <- oe_get(
   "Baden-Württemberg",
   # quiet = F,
-  extra_tags = c("maxwidth", "maxwidth:physical", "kerb"),
+  extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height"),
   layer = 'points',
   query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb') "
 )
 
 barriers$maxwidth_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth) %>% as.numeric()
+barriers$height_cleaned <- gsub("[^0-9.-]", "", barriers$height) %>% as.numeric()
 barriers$maxwidth_physical_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth_physical) %>% as.numeric()
 barriers <- barriers %>%
-  mutate(maxwidth_barriers_combined = pmin(maxwidth_cleaned, maxwidth_physical_cleaned, na.rm = T))
+  mutate(maxwidth_barriers_combined = pmin(maxwidth_cleaned, maxwidth_physical_cleaned, na.rm = T),
+         height_kerb_combined = case_when(
+           ((barrier == "kerb") & !is.na(kerb) & !is.na(height_cleaned)) ~ paste(kerb, "-", height_cleaned, "m"),
+           ((barrier == "kerb") & !is.na(kerb)) ~ kerb,
+           ((barrier == "kerb") & !is.na(height)) ~ paste(height_cleaned, "m")))
 
 # the intersection with landkreise takes about ~90 seconds
 barriers_intersected <- barriers %>%
-  select(barrier, kerb, maxwidth_barriers_combined) %>%
+  select(barrier, kerb, maxwidth_barriers_combined, height_kerb_combined) %>%
   st_transform(3035) %>% 
   st_intersection(st_transform(landkreise, 3035)) %>% 
   st_transform(4326)
@@ -257,7 +262,12 @@ kerb_ranking <- barriers_intersected %>%
   filter(barrier == "kerb") %>% # filter only kerbs
   st_drop_geometry() %>%
   group_by(kreis_name) %>%
-  summarize(count_kerbs = n()) 
+  summarize(
+    count_kerbs = n(),
+    n_with_kerb_height = sum(!is.na(height_kerb_combined))
+  ) %>%
+  mutate(
+    perc_with_kerb_height = round(n_with_kerb_height / count_kerbs * 100))
 
 # combine to singe ranking  -----------------------------------------------
 
@@ -265,13 +275,17 @@ combined_ranking <- cycleway_ranking %>%
   left_join(barrier_ranking, by = "kreis_name") %>%
   left_join(kerb_ranking, by = "kreis_name") %>%
   mutate(count_barriers = ifelse(is.na(count_barriers), 0, count_barriers),
-    count_kerbs = ifelse(is.na(count_kerbs), 0, count_kerbs)) %>% 
-  mutate(perc_total = round(((3 * count_cycleways - count_missing) + n_with_barrier_maxwidth) /
-    (count_barriers + 3 * count_cycleways) * 100)) %>% 
+         count_kerbs = ifelse(is.na(count_kerbs), 0, count_kerbs),
+         n_with_kerb_height = ifelse(is.na(n_with_kerb_height), 0, n_with_kerb_height),
+         perc_with_kerb_height = ifelse(is.na(perc_with_kerb_height), 0, perc_with_kerb_height),
+         count_total = count_cycleways + count_barriers + count_kerbs) %>% 
+  mutate(perc_total = round(((3 * count_cycleways - count_missing) + n_with_barrier_maxwidth + n_with_kerb_height) /
+                              (3 * count_cycleways + count_barriers + count_kerbs) * 100)) %>% 
   select(
     kreis_name, count_cycleways, count_barriers, count_kerbs, n_with_width, perc_with_width,
     n_with_surface, perc_with_surface, n_with_smoothness, perc_with_smoothness,
-    n_with_barrier_maxwidth, perc_with_barrier_maxwidth, perc_total
+    n_with_barrier_maxwidth, perc_with_barrier_maxwidth, n_with_kerb_height, perc_with_kerb_height,
+    count_total, perc_total
   ) %>%
   arrange(desc(perc_total))
 
@@ -285,11 +299,12 @@ if(!file.exists(baseline_path_csv)){
 
 # add change from baseline
 combined_ranking <- combined_ranking %>% 
-  left_join(baseline[,c("kreis_name", "count_cycleways", "count_barriers", "count_kerbs")], 
+  left_join(baseline[,c("kreis_name", "count_cycleways", "count_barriers", "count_kerbs", "count_total")], 
             suffix = c("", "_base"), by = "kreis_name") %>% 
   mutate(added_cycleways = count_cycleways - count_cycleways_base,
          added_barriers = count_barriers - count_barriers_base,
-         added_kerbs = count_kerbs - count_kerbs_base)
+         added_kerbs = count_kerbs - count_kerbs_base,
+         added_total = count_total - count_total_base)
 
 # write to csv
 if(file.exists(destination_path_csv)){
@@ -303,7 +318,7 @@ write_csv(combined_ranking, archive_destination_path_csv)
 
 palette <- colorBin(c("#479E8F", "#f4d03f", "#E76F51", "#B60202"), domain = c(0:4), bins = 4) # , green, yellow, orange, red
 palette_barrier <- colorNumeric(c("#479E8F"), domain = c(0:100), na.color = "#B60202")
-palette_kerb <- colorFactor(c("#479E8F"), domain = c("lowered", "raised", "flush"), na.color = "#B60202")
+palette_kerb <- colorFactor(c("#479E8F"), domain = NULL, na.color = "#B60202")
 
 for (lk in landkreise$kreis_name) {
   cw_lk <- cycleways_intersected %>%
@@ -319,12 +334,12 @@ for (lk in landkreise$kreis_name) {
   k_lk <- barriers_intersected %>%
     filter(barrier == "kerb") %>% # only kerbs
     filter(kreis_name == lk)
-
+  
   m <- leaflet(cw_lk) %>%
     addLogo("https://cargorocket.de/assets/images/cargorocket-logo.svg",
-      src = "remote",
-      position = "topleft",
-      width = "150px",
+            src = "remote",
+            position = "topleft",
+            width = "150px",
     ) %>%
     fitBounds(st_bbox(cw_lk)[[1]], st_bbox(cw_lk)[[2]], st_bbox(cw_lk)[[3]], st_bbox(cw_lk)[[4]]) %>%
     addTiles(
@@ -386,9 +401,9 @@ for (lk in landkreise$kreis_name) {
     addCircleMarkers(
       data = k_lk,
       group = "Bordsteine",
-      popup = ~ paste("Bordstein:", kerb),
+      popup = ~ paste("Bordstein-Höhe:", height_kerb_combined),
       color = "transparent",
-      fillColor = ~ palette_kerb(kerb),
+      fillColor = ~ palette_kerb(height_kerb_combined),
       fillOpacity = 0.8,
       radius = 3
     ) %>%
@@ -404,7 +419,7 @@ for (lk in landkreise$kreis_name) {
       opacity = 0.8,
       position = "bottomright", title = "Barrieren & Bordsteine (Punkte)"
     )
-
+  
   saveWidget(m, file.path(path_to_maps, paste0(lk, "_map.html")),
              title = paste("CargoRocket Mapathon", lk), selfcontained = T)
 }
