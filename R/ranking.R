@@ -225,6 +225,7 @@ cycleway_ranking <- cycleways_intersected %>%
 barriers <- oe_get(
   "Baden-Württemberg",
   # quiet = F,
+  stringsAsFactors = F,
   extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height"),
   layer = 'points',
   query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb') "
