@@ -372,7 +372,7 @@ for (lk in landkreise$kreis_name) {
       ),
       color = ~ palette(missing_values),
       opacity = 0.9,
-      weight = 4
+      weight = 6
     ) %>%
     addPolylines(
       data = cw_lk,
@@ -386,7 +386,7 @@ for (lk in landkreise$kreis_name) {
       ),
       color = ~ palette(missing_values),
       opacity = 0.9,
-      weight = 4
+      weight = 6
     ) %>%
     addCircleMarkers(
       data = b_lk,
@@ -397,7 +397,7 @@ for (lk in landkreise$kreis_name) {
       color = "transparent",
       fillColor = ~ palette_barrier(maxwidth_barriers_combined),
       fillOpacity = 0.8,
-      radius = 3
+      radius = 5
     ) %>%
     addCircleMarkers(
       data = k_lk,
@@ -406,7 +406,7 @@ for (lk in landkreise$kreis_name) {
       color = "transparent",
       fillColor = ~ palette_kerb(height_kerb_combined),
       fillOpacity = 0.8,
-      radius = 3
+      radius = 5
     ) %>%
     addLegend(
       colors = palette(0:3),
