@@ -30,11 +30,11 @@ extra_tags <- c(
   "width", "cycleway:width", "cycleway:right:width", "cycleway:left:width", "cycleway:both:width", 
   "width:lanes", "width:lanes:forward", "width:lanes:backward",
   "bicycle:lanes", "bicycle:lanes:forward", "bicycle:lanes:backward",
-  "oneway", "bicycle_road"
+  "oneway", "bicycle_road", "segregated", "bicycle", "motorroad"
 )
 
 options(timeout = 240) # prevent timeout when downloading pbf file
-cycleways <- oe_get(
+streets <- oe_get(
   "Baden-Württemberg",
   force_download = T,
   # force_vectortranslate = TRUE,
@@ -42,11 +42,33 @@ cycleways <- oe_get(
   stringsAsFactors = F,
   max_file_size = 1000000000, # ~ 1GB - default is too small
   extra_tags = extra_tags,
-  query = "SELECT * FROM 'lines' WHERE highway = 'cycleway' OR cycleway IN ('track', 'lane', 'opposite_lane') OR cycleway_right IN ('track', 'lane', 'opposite_lane') OR cycleway_left IN ('track', 'lane', 'opposite_lane') OR cycleway_both IN ('track', 'lane', 'opposite_lane') OR bicycle_road = 'yes'"
-)
+  query = "SELECT * FROM 'lines' WHERE highway <> ''")
 
-bicycle_roads <- filter(cycleways, bicycle_road %in% ("yes"))
-cycleways <- filter(cycleways, ! bicycle_road %in% ("yes"))
+streets <- streets %>% 
+  filter(highway != "motorway", #Autobahn
+         highway != "motorway_link", #Autobahnauffahrt
+         highway != "trunk", #Schnellstraße
+         highway != "trunk_link", #Schnellstraße Auffahrt
+         highway != "bus_guideway", # Suprbus-Strecke
+         highway != "escape", # Notbresmweg
+         (highway != "pedestrian") | (bicycle == "yes"), # Fußgängerzone
+         (highway != "footway") | (bicycle == "yes"), # Fußweg
+         (highway != "bridleway") | (bicycle == "yes"), # Reitweg
+         highway != "steps",
+         highway != "corridor", # Gang in inneren eines Gebäudes
+         (motorroad != "yes") | is.na(motorroad) # keine Kraftfahrstraße
+  )
+
+cycleways <- streets %>% 
+  filter((highway == "cycleway") |
+         cycleway %in% c('track', 'lane', 'opposite_lane') |
+         cycleway_right %in% c('track', 'lane', 'opposite_lane') |
+         cycleway_left %in% c('track', 'lane', 'opposite_lane') |
+         cycleway_both %in% c('track', 'lane', 'opposite_lane') |
+         (highway %in% c("path", "footway", "pedestrian") & segregated == "yes")
+         )
+
+bicycle_roads <- filter(streets, bicycle_road %in% ("yes"))
 
 # if only bicycle_lanes_forward, then remove width backward (bc this is then only applicable to road but not cycleway) and vice versa
 cycleways [is.na(cycleways$bicycle_lanes_forward), ]$width_lanes_forward <- NA
@@ -136,7 +158,6 @@ cycleways <- cycleways %>%
   rbind(st_transform(only_right, 4326)) %>% 
   mutate(
     bicycle_lanes_combined = coalesce(bicycle_lanes_forward, bicycle_lanes_backward, bicycle_lanes),
-    # lanes_combined = coalesce(lanes_forward, lanes_backward, lanes),
     width_lanes_combined = coalesce(width_lanes_forward, width_lanes_backward, width_lanes)
   )
 
@@ -161,10 +182,11 @@ cycleways <- cycleways %>%
   ) %>%
   mutate(
     # also add information for highway = cycleway
-    cycleway_combined = ifelse(highway == "cycleway", "track", cycleway_combined), 
+    cycleway_combined = ifelse(!is.na(cycleway_combined), cycleway_combined, highway), 
     cycleway_width_combined = ifelse(highway == "cycleway", width_cleaned, cycleway_width_combined)) %>% 
   # drop all cycleways "no", "opposite", "shared_busway" and others
-  filter(cycleway_combined %in% c("lane", "track", "opposite_lane"))
+  filter(cycleway_combined %in% c("path", "footway", "pedestrian", "cycleway", 
+                                  "lane", "track", "opposite_lane"))
 
 
 # combine all surface variables to one
@@ -177,12 +199,14 @@ cycleways <- cycleways %>%
     surface_combined = case_when(
       highway == "cycleway" ~ surface,
       !is.na(cycleway_surface_combined) ~ cycleway_surface_combined,
-      cycleway_combined %in% c("lane", "opposite_lane") ~ surface, # if lane on road assume same surface as street
+      # if lane on road or cyclway on path assume same surface as highway
+      cycleway_combined %in% c("path", "footway", "pedestrian", "lane", "opposite_lane") ~ surface,
     ),
     smoothness_combined = case_when(
       highway == "cycleway" ~ smoothness,
       !is.na(cycleway_smoothness_combined) ~ cycleway_smoothness_combined,
-      cycleway_combined %in% c("lane", "opposite_lane") ~ smoothness, # if lane on road assume same surface as street
+      # if lane on road or cycleway on path assume same smoothness as highway
+      cycleway_combined %in% c("path", "footway", "pedestrian", "lane", "opposite_lane") ~ smoothness,
     )
   ) %>%
   select(highway, name, cycleway_combined, cycleway_width_combined, surface_combined, smoothness_combined) # reduce columns
@@ -240,6 +264,16 @@ barriers <- barriers %>%
            ((barrier == "kerb") & !is.na(kerb) & !is.na(height_cleaned)) ~ paste(kerb, "-", height_cleaned, "m"),
            ((barrier == "kerb") & !is.na(kerb)) ~ kerb,
            ((barrier == "kerb") & !is.na(height)) ~ paste(height_cleaned, "m")))
+
+# only keep barriers that intersect with roads
+# 4 min for union, 18 min for intersects
+all_streets <- streets %>% 
+  st_transform(3035) %>% st_union()
+barriers_on_roads <- barriers %>% 
+  st_transform(3035) %>% 
+  st_intersects(all_streets, sparse = F)
+
+barriers <- barriers[barriers_on_roads[,1], ]
 
 # the intersection with landkreise takes about ~90 seconds
 barriers_intersected <- barriers %>%
