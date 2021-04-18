@@ -11,6 +11,11 @@ library(leafem)
 library(htmlwidgets)
 library(readr)
 
+# 'create_baseline_csv' should usually be set to False, to create newest ranking
+# set to True, if baseline_csv needs to be recomputed 
+# (e.g. when algorithm to count barriers has changed and old baseline does not create correct "added barriers" count anymore)
+create_baseline_csv <- F
+
 mapbox_key <- "pk.eyJ1IjoibHhuZHJrcHAiLCJhIjoiY2tuNHBiaWVhMGt5czJvbzBwZXY3aDg3MCJ9.VvzhWzj9LSz0K68lJoBhng"
 
 landkreise <- read_sf(here("data", "bw_landkreise.geojson")) %>%
@@ -22,7 +27,6 @@ path_to_maps <- here("docs", "datenrennen_maps")
 dir.create(path_to_maps, showWarnings = F)
 
 # cycleway ranking: surface, smoothness, width -----------------------------
-
 extra_tags <- c(
   "cycleway", "cycleway:right", "cycleway:left", "cycleway:both",
   "surface", "cycleway:surface", "cycleway:right:surface", "cycleway:left:surface", "cycleway:both:surface", 
@@ -30,33 +34,66 @@ extra_tags <- c(
   "width", "cycleway:width", "cycleway:right:width", "cycleway:left:width", "cycleway:both:width", 
   "width:lanes", "width:lanes:forward", "width:lanes:backward",
   "bicycle:lanes", "bicycle:lanes:forward", "bicycle:lanes:backward",
-  "oneway", "bicycle_road", "segregated", "bicycle", "motorroad"
+  "oneway", "bicycle_road", "segregated", "bicycle", "motorroad", "tracktype"
 )
+if(create_baseline_csv){
+  streets <- oe_read(
+    "https://download.geofabrik.de/europe/germany/baden-wuerttemberg-210416.osm.pbf",
+    #force_download = T,
+    stringsAsFactors = F,
+    max_file_size = 1000000000, # ~ 1GB - default is too small
+    extra_tags = extra_tags,
+    query = "SELECT * FROM 'lines' WHERE highway <> ''")
+  
+  barriers <- oe_read(
+    "https://download.geofabrik.de/europe/germany/baden-wuerttemberg-210416.osm.pbf",
+    # quiet = F,
+    stringsAsFactors = F,
+    extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height"),
+    layer = 'points',
+    query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb') "
+  )
+  
+} else{
+  options(timeout = 240) # prevent timeout when downloading pbf file
 
-options(timeout = 240) # prevent timeout when downloading pbf file
-streets <- oe_get(
-  "Baden-Württemberg",
-  force_download = T,
-  # force_vectortranslate = TRUE,
-  # quiet = T,
-  stringsAsFactors = F,
-  max_file_size = 1000000000, # ~ 1GB - default is too small
-  extra_tags = extra_tags,
-  query = "SELECT * FROM 'lines' WHERE highway <> ''")
+  streets <- oe_get(
+    "Baden-Württemberg",
+    force_download = T,
+    # force_vectortranslate = TRUE,
+    # quiet = T,
+    stringsAsFactors = F,
+    max_file_size = 1000000000, # ~ 1GB - default is too small
+    extra_tags = extra_tags,
+    query = "SELECT * FROM 'lines' WHERE highway <> ''")
+  
+  barriers <- oe_get(
+    "Baden-Württemberg",
+    # quiet = F,
+    stringsAsFactors = F,
+    extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height"),
+    layer = 'points',
+    query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb') "
+  )
+  }
 
-streets <- streets %>% 
-  filter(highway != "motorway", #Autobahn
-         highway != "motorway_link", #Autobahnauffahrt
-         highway != "trunk", #Schnellstraße
-         highway != "trunk_link", #Schnellstraße Auffahrt
-         highway != "bus_guideway", # Suprbus-Strecke
-         highway != "escape", # Notbresmweg
-         (highway != "pedestrian") | (bicycle == "yes"), # Fußgängerzone
-         (highway != "footway") | (bicycle == "yes"), # Fußweg
-         (highway != "bridleway") | (bicycle == "yes"), # Reitweg
-         highway != "steps",
-         highway != "corridor", # Gang in inneren eines Gebäudes
-         (motorroad != "yes") | is.na(motorroad) # keine Kraftfahrstraße
+streets <- streets %>%
+  filter(
+    !bicycle %in% c("no", "private") | is.na(bicycle), # bikes not allowed
+    highway != "proposed",
+    highway != "motorway", # Autobahn
+    highway != "motorway_link", # Autobahnauffahrt
+    (highway != "trunk") | (bicycle %in% c("yes", "designated", "permissive")), # Schnellstraße
+    (highway != "trunk_link") | (bicycle %in% c("yes", "designated", "permissive")), # Schnellstraße Auffahrt
+    tracktype != "grade5" | is.na(tracktype), # unbefestigter Weg
+    highway != "bus_guideway", # Suprbus-Strecke
+    highway != "escape", # Notbresmweg
+    (highway != "pedestrian") | (bicycle %in% c("yes", "designated", "permissive")), # Fußgängerzone # TODO: auch designated
+    (highway != "footway") | (bicycle %in% c("yes", "designated", "permissive")), # Fußweg
+    (highway != "bridleway") | (bicycle %in% c("yes", "designated", "permissive")), # Reitweg
+    highway != "steps",
+    highway != "corridor", # Gang in inneren eines Gebäudes
+    (motorroad != "yes") | is.na(motorroad) # keine Kraftfahrstraße
   )
 
 cycleways <- streets %>% 
@@ -97,7 +134,6 @@ only_left <- cycleways %>%
     cycleway_right_smoothness = NA,
     cycleway_right_width = NA,
     cycleway_right_width_cleaned = NA,
-    # lanes_forward = NA,
     bicycle_lanes_forward = NA,
     width_lanes_forward = NA
   ) %>%
@@ -110,7 +146,6 @@ only_right <- cycleways %>%
     cycleway_left_smoothness = NA,
     cycleway_left_width = NA,
     cycleway_left_width_cleaned = NA,
-    # lanes_backward = NA,
     bicycle_lanes_backward = NA,
     width_lanes_backward = NA
   ) %>%
@@ -246,15 +281,6 @@ cycleway_ranking <- cycleways_intersected %>%
 
 # barrier ranking: maxwidth or maxwidth:physical --------------------------
 
-barriers <- oe_get(
-  "Baden-Württemberg",
-  # quiet = F,
-  stringsAsFactors = F,
-  extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height"),
-  layer = 'points',
-  query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb') "
-)
-
 barriers$maxwidth_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth) %>% as.numeric()
 barriers$height_cleaned <- gsub("[^0-9.-]", "", barriers$height) %>% as.numeric()
 barriers$maxwidth_physical_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth_physical) %>% as.numeric()
@@ -266,14 +292,15 @@ barriers <- barriers %>%
            ((barrier == "kerb") & !is.na(height)) ~ paste(height_cleaned, "m")))
 
 # only keep barriers that intersect with roads
-# 4 min for union, 18 min for intersects
-all_streets <- streets %>% 
-  st_transform(3035) %>% st_union()
-barriers_on_roads <- barriers %>% 
-  st_transform(3035) %>% 
-  st_intersects(all_streets, sparse = F)
-
-barriers <- barriers[barriers_on_roads[,1], ]
+# TODO: intersection not working correctly on server?!
+# takes about 1h
+# all_streets <- streets %>% 
+#   st_transform(3035) %>% st_union()
+# barriers_on_roads <- barriers %>% 
+#   st_transform(3035) %>% 
+#   st_intersects(all_streets, sparse = F)
+# 
+# barriers <- barriers[barriers_on_roads[,1], ]
 
 # the intersection with landkreise takes about ~90 seconds
 barriers_intersected <- barriers %>%
@@ -326,7 +353,7 @@ combined_ranking <- cycleway_ranking %>%
   arrange(desc(perc_total))
 
 # get baseline
-if(!file.exists(baseline_path_csv)){
+if(!file.exists(baseline_path_csv) | (create_baseline_csv)){
   baseline <- combined_ranking
   write_csv(combined_ranking, baseline_path_csv) # if no baseline file present - write new one
 } else {
@@ -343,11 +370,14 @@ combined_ranking <- combined_ranking %>%
          added_total = count_total - count_total_base)
 
 # write to csv
-if(file.exists(destination_path_csv)){
-  file.remove(destination_path_csv) # problems with rights to overwrite(?)
+if(!create_baseline_csv) {
+    
+  if(file.exists(destination_path_csv)){
+    file.remove(destination_path_csv) # problems with rights to overwrite(?)
+  }
+  write_csv(combined_ranking, destination_path_csv)
+  write_csv(combined_ranking, archive_destination_path_csv)
 }
-write_csv(combined_ranking, destination_path_csv)
-write_csv(combined_ranking, archive_destination_path_csv)
 
 
 # create map --------------------------------------------------------------
