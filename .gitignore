@@ -3,6 +3,7 @@
 env.R
 .DS_Store
 *.pbf
+playground
 
 # History files
 .Rhistory
