@@ -1,5 +1,5 @@
 # install.packages("librarian", quiet = T)
-# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
+# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr, tibble)
 
 library(osmextract)
 library(sf)
@@ -10,6 +10,7 @@ library(leaflet)
 library(leafem)
 library(htmlwidgets)
 library(readr)
+library(tibble)
 
 # 'create_baseline_csv' should usually be set to False, to create newest ranking
 # set to True, if baseline_csv needs to be recomputed 
@@ -40,7 +41,7 @@ extra_tags <- c(
 if(create_baseline_csv){
   streets <- oe_read(
     "https://download.geofabrik.de/europe/germany/baden-wuerttemberg-210416.osm.pbf",
-    #force_download = T,
+    force_download = T,
     stringsAsFactors = F,
     max_file_size = 1000000000, # ~ 1GB - default is too small
     extra_tags = extra_tags,
