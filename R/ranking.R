@@ -1,5 +1,5 @@
 # install.packages("librarian", quiet = T)
-# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr)
+# librarian::shelf(osmextract, sf, dplyr, stringr, here, leaflet, leafem, htmlwidgets, readr, tibble)
 
 library(osmextract)
 library(sf)
@@ -10,6 +10,7 @@ library(leaflet)
 library(leafem)
 library(htmlwidgets)
 library(readr)
+library(tibble)
 
 # 'create_baseline_csv' should usually be set to False, to create newest ranking
 # set to True, if baseline_csv needs to be recomputed 
@@ -24,6 +25,7 @@ destination_path_csv <- here("data", "ranking.csv")
 baseline_path_csv <- here("data", "baseline_ranking.csv")
 archive_destination_path_csv <- here("data", paste0(Sys.Date(), "_ranking.csv"))
 path_to_maps <- here("docs", "datenrennen_maps")
+barrier_cache_path <- here("data", "barriers_cache.csv")
 dir.create(path_to_maps, showWarnings = F)
 
 # cycleway ranking: surface, smoothness, width -----------------------------
@@ -39,7 +41,7 @@ extra_tags <- c(
 if(create_baseline_csv){
   streets <- oe_read(
     "https://download.geofabrik.de/europe/germany/baden-wuerttemberg-210416.osm.pbf",
-    #force_download = T,
+    force_download = T,
     stringsAsFactors = F,
     max_file_size = 1000000000, # ~ 1GB - default is too small
     extra_tags = extra_tags,
@@ -292,15 +294,54 @@ barriers <- barriers %>%
            ((barrier == "kerb") & !is.na(height)) ~ paste(height_cleaned, "m")))
 
 # only keep barriers that intersect with roads
-# TODO: intersection not working correctly on server?!
-# takes about 1h
-# all_streets <- streets %>% 
-#   st_transform(3035) %>% st_union()
-# barriers_on_roads <- barriers %>% 
-#   st_transform(3035) %>% 
-#   st_intersects(all_streets, sparse = F)
-# 
-# barriers <- barriers[barriers_on_roads[,1], ]
+#  without cache: takes about 1h. Otherwise a few minutes
+
+# get cached intersection of barriers and streets
+
+if(file.exists(barrier_cache_path)) {
+  barriers_cached <- read_csv(barrier_cache_path)
+} else {
+  barriers_cached <- tibble::tibble(osm_id = character(), on_road = logical()) 
+}
+
+# only check for new barriers if they intersect with streets
+# for known ones use the cache
+new_barriers <- barriers %>% 
+  filter(! osm_id %in% barriers_cached$osm_id) %>% 
+  st_transform(3035)
+st_precision(new_barriers) <- 1
+
+# skip if no new barriers
+if(nrow(new_barriers) > 0) {
+  
+  all_streets <-  st_transform(streets, 3035)
+  st_precision(all_streets) <- 1
+  all_streets <- st_union(all_streets)
+  
+  new_barriers_intersected <- new_barriers %>%
+    st_intersects(all_streets, sparse = F)
+  
+  # combine cached and new barriers
+  all_barriers <- new_barriers %>% 
+    select(osm_id) %>% 
+    st_drop_geometry() %>% 
+    cbind(on_road = new_barriers_intersected) %>% 
+    rbind(barriers_cached)
+  
+  write_csv(all_barriers, here("data", "barriers_cache.csv"))
+  
+  barriers_on_roads_ids <- all_barriers %>% 
+    filter(on_road) %>% 
+    pull(osm_id)
+  
+  # only use barriers that intersect with road
+} else {
+  barriers_on_roads_ids <- barriers_cached %>% 
+    filter(on_road) %>% 
+    pull(osm_id)
+}
+
+barriers <- filter(barriers, osm_id %in% barriers_on_roads_ids)
 
 # the intersection with landkreise takes about ~90 seconds
 barriers_intersected <- barriers %>%
