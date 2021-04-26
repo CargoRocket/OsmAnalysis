@@ -13,6 +13,9 @@ library(hereR)
 # load data ---------------------------------------------------------------
 
 streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_path) {
+  pedestrian_street_types <- c("path", "footway", "pedestrian")
+  bicycle_allowed <- c("yes", "permissive", "designated")
+  
   extra_tags <- c(
     "bicycle", "access", "oneway:bicycle", "use_sidepath", "embedded_rails", "maxspeed", "incline:across",
     "traffic", "segregated", "tracktype",
@@ -319,6 +322,15 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     group_by(osm_id) %>%
     summarise(width_block = min(maxwidth_barriers_combined)) %>%
     ungroup()
+  
+  liftgate_barrier_widths <- streets_3035 %>%
+    filter(has_lift_gate) %>%
+    st_intersection(select(lift_gates, c(barrier, maxwidth_barriers_combined))) %>%
+    st_drop_geometry() %>%
+    select(osm_id, maxwidth_barriers_combined) %>%
+    group_by(osm_id) %>%
+    summarise(width_liftgate = min(maxwidth_barriers_combined)) %>%
+    ungroup()
 
   kerb_height <- streets_3035 %>%
     filter(has_kerb) %>%
@@ -335,22 +347,17 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     left_join(cycle_barrier_widths, by = "osm_id") %>%
     left_join(bollard_barrier_widths, by = "osm_id") %>%
     left_join(block_barrier_widths, by = "osm_id") %>%
+    left_join(liftgate_barrier_widths, by = "osm_id") %>%
     left_join(kerb_height, by = "osm_id")
 
   # create additional variables ´-------------------------------
 
-  # do you have to share the road with cars?
-  streets <- streets %>%
-    mutate(with_cars = case_when(
-      highway %in% c("path", "footway", "pedestrian", "bridleway") ~ F,
-      cycleway_combined %in% c("no", "none", "shared", "shared_lane") ~ T,
-      (!is.na(cycleway_combined)) ~ F,
-      TRUE ~ T
-    ))
-
   streets <- streets %>%
     # label for barriers
     mutate(
+      dismount_necessary = ifelse((highway %in% pedestrian_street_types) & 
+                                    (!bicycle %in% bicycle_allowed) & 
+                                    (!segregated %in% c("yes")), T, F),
       which_barrier = case_when(
         has_cycle_barrier ~ "Umlaufsperre",
         has_bollard ~ "Poller",
@@ -364,6 +371,7 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
         has_cycle_barrier ~ paste(width_cycle_barrier, "m"),
         has_bollard ~ paste(width_bollard, "m"),
         has_block ~ paste(width_block, "m"),
+        has_liftgate ~ paste(width_liftgate, "m"),
         has_kerb ~ kerb_height_both
       )
     )
@@ -374,7 +382,6 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     mutate(
       cbindex_cycleways = case_when(
         bicycle_road == "yes" ~ 5,
-        bicycle == "dismount" ~ 1,
         cycleway_width_combined >= 4 & cycleway_oneway_combined == "no" ~ 5,
         (cycleway_width_combined >= 3.2 & cycleway_width_combined <= 4.0) & cycleway_oneway_combined == "no" ~ 4,
         (cycleway_width_combined >= 2.4 & cycleway_width_combined <= 3.2) & cycleway_oneway_combined == "no" ~ 3,
@@ -392,18 +399,18 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
         cycleway_combined == "share_busway" ~ 3,
         # oneway_bicycle == "yes" ~ 8, #  how should this be rated?
         highway == "steps" ~ 0, # stairs not passable
-        highway == "residential" | highway == "living_street" ~ 4, # 30 kmh Zonen
-        highway == "path" & segregated == "yes" ~ 4, # gibt es einen separaten Radweg?
-        highway == "footway" & segregated == "yes" ~ 4,
-        highway == "pedestrian" & segregated == "yes" ~ 4,
         highway == "track" & tracktype == "grade1" ~ 4,
         highway == "track" & tracktype == "grade2" ~ 3,
         highway == "track" & tracktype == "grade5" ~ 0, # not passable for regular cargobikes
-        highway == "path" ~ 2, # TODO: add option for dismount?
-        highway == "footway" ~ 2,
-        highway == "pedestrian" ~ 2,
         highway == "track" ~ 1, # track without tracktype or tracktype < grade 2
+        (highway %in% pedestrian_street_types) & (segregated == "yes") ~ 4, # is there a separate cycleway?
+        (highway %in% pedestrian_street_types) & (bicycle %in% bicycle_allowed) ~ 2, # bicycle share street with pedestrians
+        (highway %in% pedestrian_street_types) ~ 1, # cyclists have to dismount
+        highway == "residential" | highway == "living_street" ~ 4, # residential streets
+        highway == "corridor" ~ 1,
         highway == "service" ~ 2,
+        bicycle %in% c("no") ~ 0, # motorways or bridlway that do not allow bicycles - not even pushing the bike
+        highway == "bridleway" ~ 1,
         highway == "trunk" ~ 2,
         highway == "trunk_link" ~ 2,
         highway == "primary" ~ 1, # Hauptstraße ohne Radwege
@@ -412,8 +419,6 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
         highway == "secondary_link" ~ 2,
         highway == "tertiary" ~ 3,
         highway == "tertiary_link" ~ 3,
-        highway == "bridleway" ~ 1,
-        highway == "corridor" ~ 1,
         highway == "road" ~ 2,
         highway == "unclassified" ~ 2,
         maxspeed >= 50 ~ 1,
@@ -449,7 +454,6 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
       ) %>% as.numeric(),
       cbindex_barrier = case_when(
         has_cycle_barrier ~ 0,
-        has_lift_gate ~ 0,
         has_bollard & width_bollard < 0.9 ~ 0,
         has_bollard & width_bollard < 1.0 ~ 1,
         has_bollard & width_bollard < 1.2 ~ 2,
@@ -462,12 +466,24 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
         has_block & width_block < 1.5 ~ 4,
         has_block & width_block >= 1.5 ~ 5,
         has_block ~ 4,
+        has_lift_gate & width_bollard < 0.9 ~ 0,
+        has_lift_gate & width_bollard < 1.0 ~ 1,
+        has_lift_gate & width_bollard < 1.2 ~ 2,
+        has_lift_gate & width_bollard < 1.5 ~ 4,
+        has_lift_gate & width_bollard >= 1.5 ~ 5,
+        has_lift_gate ~ 2,
         has_kerb & kerb_height == "flush" ~ 5,
         has_kerb & kerb_height == "lowered" ~ 3,
         has_kerb & kerb_height == "raised" ~ 1,
         has_kerb ~ 2,
         has_traffic_calming ~ 3
         # has_cycle_barrier & width_cycle_barrier > 1.5 ~ 8
+      ),  
+      pedestrian_traffic = case_when(
+        highway %in% c("footway", "path", "pedestrian", "bridlway", "track") & 
+          (segregated != "yes") & (bicycle %in% c("yes", "permissive", "designated")) ~ 2, # path shared bike pedestrians, cycling allowed
+        highway %in% c("footway", "path", "pedestrian", "bridlway", "track") & 
+          (segregated != "yes") & (!bicycle %in% c("yes", "permissive", "designated")) ~ 1 # dismount bike
       )
     )
 
@@ -488,15 +504,50 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
       )
     )
 
-  #  select(highway, name, cycleway_combined, cycleway_width_combined, surface_combined, smoothness_combined) # reduce columns
   return(streets %>%
-    select(-waterway, -aerialway, -barrier, -man_made, -z_order, -other_tags))
+           select(osm_id, name, highway,
+                  cbindex, cbindex_street_quality,
+                  cbindex_cycleways, cycleway_combined, cycleway_width_combined, 
+                  cbindex_surface, surface_combined, smoothness_combined, 
+                  cbindex_barrier, which_barrier, maxwidth_combined,
+                  pedestrian_traffic, maxspeed, bicycle_road, segregated, dismount_necessary))
 }
 
-pedestrian_traffic_data <- function() {
-  # --------------------------------------------------------- #
-  # further data sources -------------------------------------
+pedestrian_traffic_data <- function(pbf_file_name, geo_clip_file_path) {
+  ## pedestrian traffic
+  markets <- oe_get(
+    pbf_file_name,
+    # force_download = T,
+    # force_vectortranslate = TRUE,
+    # quiet = T,
+    stringsAsFactors = F,
+    max_file_size = 1000000000, # ~ 1GB - default is too small
+    extra_tags = c("opening_hours", "amenity"),
+    layer = "points",
+    query = "SELECT * FROM 'points' WHERE  amenity = 'marketplace'"
+  )
+  
+  if (!is.na(geo_clip_file_path) & geo_clip_file_path != "") {
+    geo_selection <- read_sf(geo_clip_file_path)
+    markets <- markets[st_intersects(markets, geo_selection, sparse = F)[, 1], ]
+  }
+  
+  # poly <- oe_get(
+  #   pbf_file_name,
+  #   # force_download = T,
+  #   # force_vectortranslate = TRUE,
+  #   # quiet = T,
+  #   stringsAsFactors = F,
+  #   max_file_size = 1000000000, # ~ 1GB - default is too small
+  #   extra_tags = c("opening_hours", "amenity"),
+  #   layer = "multipolygons",
+  #   query = "SELECT * FROM 'multipolygons'"
+  # )
+  
+  return (markets)
+}
 
+car_traffic_data <- function() {
   ## Car traffic
   # for testing only get traffic for xhain
   # xhain <- read_sf(here("data", "bezirke.geojson")) %>%
@@ -506,7 +557,7 @@ pedestrian_traffic_data <- function() {
   #   mutate(traffic_index = 10 - JF) %>%
   #   st_transform(3035) %>%
   #   st_buffer(5) # set 5 m buffer
-
+  
   # TODO: map car traffic onto osm streets
   # streets_with_traffic <- streets %>%
   #   st_transform(3035) %>%
@@ -518,23 +569,5 @@ pedestrian_traffic_data <- function() {
   #
   # streets <- streets %>%
   #   left_join(streets_with_traffic, by = "osm_id")
-
-
-  ## pedestrian traffic
-  # TODO:
-  # - get traffic on shared streets
-  # - include market places & opening hours
-  # - use heuristics: avoid saturday / (sundays -> in parks) afternoons on pedestrian roads
-
-  # cbindex_pedestrians = case_when(
-  #   bicycle == "dismount" ~ 1,
-  #   highway == "pedestrian" & (segregated != "yes" | is.na(segregated)) ~ 5, # Fußgängerzone
-  #   highway == "footway" & (segregated != "yes" | is.na(segregated)) ~ 5, # Gehweg Fahrrad frei
-  #   segregated == "no" ~ 5 # keine Trennung von Fuß- und Gehweg
-  # )
-
-  # cbindex_traffic = ifelse(with_cars, traffic_index, NA),
-
-  # st_write(streets, here("data", "streets_berlin.gpkg"))
-  # streets <- read_sf(here("data", "streets_berlin.gpkg"))
+  
 }
