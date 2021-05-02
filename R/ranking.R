@@ -316,10 +316,13 @@ if(nrow(new_barriers) > 0) {
   
   all_streets <-  st_transform(streets, 3035)
   st_precision(all_streets) <- 1
-  all_streets <- st_union(all_streets)
+
+  all_streets <-  st_transform(streets, 3035)
+  st_precision(all_streets) <- 1
+  #all_streets <- st_union(all_streets)
   
-  new_barriers_intersected <- new_barriers %>%
-    st_intersects(all_streets, sparse = F)
+  new_barriers_intersected <- st_intersects(all_streets, new_barriers, sparse = F) %>% 
+  new_barriers_intersected <-   colSums(barriers_intersected) > 0
   
   # combine cached and new barriers
   all_barriers <- new_barriers %>% 
