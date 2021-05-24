@@ -9,17 +9,11 @@ library(data.table)
 library(tidyr)
 library(tictoc)
 
-# source(here("R", "env.R"))
+source(here("R", "env.R"))
 # hereR::set_key(here_key)
 
 
-# load data ---------------------------------------------------------------
-
-streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_path,
-                         sub_regions_path) {
-  pedestrian_street_types <- c("path", "footway", "pedestrian")
-  bicycle_allowed <- c("yes", "permissive", "designated")
-  
+get_streets_pbf_data <- function(pbf_file_name, geo_clip_file_path) {
   extra_tags <- c(
     "bicycle", "access", "oneway:bicycle", "use_sidepath", "embedded_rails", "maxspeed", "incline:across",
     "traffic", "segregated", "tracktype",
@@ -33,62 +27,141 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     "bicycle_road", "motorroad"
   )
   options(timeout = 240) # prevent timeout when downloading pbf file
-  streets <- oe_get(
-    pbf_file_name,
-    #force_download = T,
-    # force_vectortranslate = TRUE,
-    # quiet = T,
-    stringsAsFactors = F,
-    max_file_size = 1000000000, # ~ 1GB - default is too small
-    extra_tags = extra_tags,
-    query = "SELECT * FROM 'lines' WHERE highway <> ''"
-  )
+  # streets <- oe_get(
+  #   pbf_file_name,
+  #   #force_download = T,
+  #   # force_vectortranslate = TRUE,
+  #   # quiet = T,
+  #   stringsAsFactors = F,
+  #   max_file_size = 1000000000, # ~ 1GB - default is too small
+  #   extra_tags = extra_tags,
+  #   query = "SELECT * FROM 'lines' WHERE highway <> ''"
+  # )
   
-  # streets <- oe_read(here("data", "playground", "stuttgart-regbez-latest.osm.pbf"),
-  #         stringsAsFactors = F,
-  #         extra_tags = extra_tags,
-  #         query = "SELECT * FROM 'lines' WHERE highway <> ''")
+  streets <- oe_read(here("data", "berlin-latest.osm.pbf"),
+                     stringsAsFactors = F,
+                     extra_tags = extra_tags,
+                     query = "SELECT * FROM 'lines' WHERE highway <> ''")
   
-  streets$width_cleaned <- gsub("[^0-9.-]", "", streets$width) %>% as.numeric()
-  streets$cycleway_width_cleaned <- gsub("[^0-9.-]", "", streets$cycleway_width) %>% as.numeric()
-  streets$cycleway_right_width_cleaned <- gsub("[^0-9.-]", "", streets$cycleway_right_width) %>% as.numeric()
-  streets$cycleway_left_width_cleaned <- gsub("[^0-9.-]", "", streets$cycleway_left_width) %>% as.numeric()
-  streets$cycleway_both_width_cleaned <- gsub("[^0-9.-]", "", streets$cycleway_both_width) %>% as.numeric()
-  streets$maxspeed_cleaned <- gsub("[^0-9.-]", "", streets$maxspeed) %>% as.numeric()
-  
-  barriers <- oe_get(
-    pbf_file_name,
-    # quiet = F,
-    stringsAsFactors = F,
-    extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height", "traffic_calming"),
-    layer = "points",
-    query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb', 'lift_gate') OR traffic_calming IN ('bump', 'mini_bumps', 'rumble_strip') "
-  )
-  
-  #   barriers <- oe_read(here("data", "playground", "stuttgart-regbez-latest.osm.pbf"),
-  #                       extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height", "traffic_calming"),
-  #                       layer = 'points',
-  #   query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb', 'lift_gate') OR traffic_calming IN ('bump', 'mini_bumps', 'rumble_strip') "
-  #   )
-  
-  barriers[!is.na(barriers$traffic_calming), "barrier"] <- "traffic_calming"
-  barriers$kerb <- factor(barriers$kerb, levels = c("flush", "lowered", "raised"), ordered = T)
-  
-  barriers$maxwidth_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth) %>% as.numeric()
-  barriers$maxwidth_physical_cleaned <- gsub("[^0-9.-]", "", barriers$maxwidth_physical) %>% as.numeric()
-  barriers$height_cleaned <- gsub("[^0-9.-]", "", barriers$height) %>% as.numeric()
-  barriers <- barriers %>%
-    mutate(maxwidth_barriers_combined = pmin(maxwidth_cleaned, maxwidth_physical_cleaned, na.rm = T))
+  streets$width <- gsub("[^0-9.-]", "", gsub(",", ".", streets$width)) %>% as.numeric()
+  streets$cycleway_width <- gsub("[^0-9.-]", "", gsub(",", ".", streets$cycleway_width)) %>% as.numeric()
+  streets$cycleway_right_width <- gsub("[^0-9.-]", "", gsub(",", ".", streets$cycleway_right_width)) %>% as.numeric()
+  streets$cycleway_left_width <- gsub("[^0-9.-]", "", gsub(",", ".", streets$cycleway_left_width)) %>% as.numeric()
+  streets$cycleway_both_width <- gsub("[^0-9.-]", "", gsub(",", ".", streets$cycleway_both_width)) %>% as.numeric()
+  streets$maxspeed <- gsub("[^0-9.-]", "", gsub(",", ".", streets$maxspeed)) %>% as.numeric()
   
   # clip to given boundaries
   if (!is.na(geo_clip_file_path) & geo_clip_file_path != "") {
     geo_selection <- read_sf(geo_clip_file_path) %>% st_transform(3035)
     streets <- streets[st_intersects(st_transform(streets, 3035), geo_selection, sparse = F)[, 1], ]
-    barriers <- barriers[st_intersects(st_transform(barriers, 3035), geo_selection, sparse = F)[, 1], ]
   }
   
-  st_precision(streets) <- 10000
-  st_precision(barriers) <- 10000
+  st_precision(streets) <- 1000000
+  
+  return(streets)
+}
+
+get_barrier_pbf_data <- function(pbf_file_name, geo_clip_file_path) {
+  
+  # barriers <- oe_get(
+  #   pbf_file_name,
+  #   # quiet = F,
+  #   stringsAsFactors = F,
+  #   extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height", "traffic_calming"),
+  #   layer = "points",
+  #   query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb', 'lift_gate') OR traffic_calming IN ('bump', 'mini_bumps', 'rumble_strip') "
+  # )
+  
+  barriers <- oe_read(here("data", "berlin-latest.osm.pbf"),
+                      extra_tags = c("maxwidth", "maxwidth:physical", "kerb", "height", "traffic_calming"),
+                      layer = 'points',
+                      query = "SELECT * FROM 'points' WHERE barrier IN ('bollard', 'block', 'cycle_barrier', 'kerb', 'lift_gate') OR traffic_calming IN ('bump', 'mini_bumps', 'rumble_strip') "
+  )
+  
+  barriers[!is.na(barriers$traffic_calming), "barrier"] <- "traffic_calming"
+  barriers$kerb <- factor(barriers$kerb, levels = c("flush", "lowered", "raised"), ordered = T)
+  
+  barriers$maxwidth <- gsub("[^0-9.-]", "", barriers$maxwidth) %>% as.numeric()
+  barriers$maxwidth_physical <- gsub("[^0-9.-]", "", barriers$maxwidth_physical) %>% as.numeric()
+  barriers$height <- gsub("[^0-9.-]", "", barriers$height) %>% as.numeric()
+  barriers <- barriers %>%
+    mutate(maxwidth_barriers_combined = pmin(maxwidth, maxwidth_physical, na.rm = T))
+  
+  if (!is.na(geo_clip_file_path) & geo_clip_file_path != "") {
+    geo_selection <- read_sf(geo_clip_file_path) %>% st_transform(3035)
+    barriers <- barriers[st_intersects(st_transform(barriers, 3035), geo_selection, sparse = F)[, 1], ]
+  }
+  st_precision(barriers) <- 1000000
+  
+  return(barriers)
+}
+
+get_streets_pg_data <- function() {
+  m <- dbDriver("PostgreSQL")
+  con <- dbConnect(m, dbname= pg_db, host = pg_host, 
+                   user = pg_user, password = pg_password)
+  
+  streets <- get_postgis_query(con, paste0("SELECT id AS osm_id, tags, 
+                                    tags -> 'highway' AS highway,
+                                    tags -> 'bicycle' AS bicycle,
+                                    tags -> 'bicycle_road' AS bicycle_road,
+                                    tags -> 'motorroad' AS motorroad,
+                                    tags -> 'oneway' AS oneway,
+                                    tags -> 'access' AS access,
+                                    tags -> 'use_sidepath' AS use_sidepath,
+                                    tags -> 'embedded_rails' AS embedded_rails,
+                                    tags -> 'maxspeed' AS maxspeed,
+                                    tags -> 'segregated' AS segregated,
+                                    tags -> 'tracktype' AS tracktype,
+                                    tags -> 'cycleway' AS cycleway,
+                                    tags -> 'cycleway:right' AS cycleway_right,
+                                    tags -> 'cycleway:left' AS cycleway_left,
+                                    tags -> 'cycleway:both' AS cycleway_both,
+                                    tags -> 'surface' AS surface,
+                                    tags -> 'cycleway:surface' AS cycleway_surface,
+                                    tags -> 'cycleway:right:surface' AS cycleway_right_surface,
+                                    tags -> 'cycleway:left:surface' AS cycleway_left_surface,
+                                    tags -> 'cycleway:both:surface' AS cycleway_both_surface,
+                                    tags -> 'smoothness' AS smoothness,
+                                    tags -> 'cycleway:smoothness' AS cycleway_smoothness,
+                                    tags -> 'cycleway:right:smoothness' AS cycleway_right_smoothness,
+                                    tags -> 'cycleway:left:smoothness' AS cycleway_left_smoothness,
+                                    tags -> 'cycleway:both:smoothness' AS cycleway_both_smoothness,
+                                    tags -> 'width' AS width,
+                                    tags -> 'cycleway:width' AS cycleway_width,
+                                    tags -> 'cycleway:right:width' AS cycleway_right_width,
+                                    tags -> 'cycleway:left:width' AS cycleway_left_width,
+                                    tags -> 'cycleway:both:width' AS cycleway_both_width,
+                                    tags -> 'width:lanes' AS width_lanes,
+                                    tags -> 'width:lanes:forward' AS width_lanes_forward,
+                                    tags -> 'width:lanes:backward' AS width_lanes_backward,
+                                    tags -> 'bicycle:lanes' AS bicycle_lanes,
+                                    tags -> 'bicycle:lanes:forward' AS bicycle_lanes_forward,
+                                    tags -> 'bicycle:lanes:backward' AS bicycle_lanes_backward,
+                                    tags -> 'cycleway:oneway' AS cycleway_oneway,
+                                    tags -> 'cycleway:right:oneway' AS cycleway_right_oneway,
+                                    tags -> 'cycleway:left:oneway' AS cycleway_left_oneway,
+                                    tags -> 'cycleway:both:oneway' AS cycleway_both_oneway
+                                    FROM ways  WHERE tags -> 'highway' <> ''LIMIT 1000"),
+                               hstore_name = "tags")
+  
+  return(streets)
+}
+
+# load data ---------------------------------------------------------------
+
+streets_data <- function(source = "pbf", pbf_file_name = "Baden-Württemberg", geo_clip_file_path,
+                         sub_regions_path, with_line_shift = T) {
+  pedestrian_street_types <- c("path", "footway", "pedestrian")
+  bicycle_allowed <- c("yes", "permissive", "designated")
+  cycleway_options <-  c("track", "lane", "opposite_lane", "share_busway")
+  
+  if(source == "pbf") {
+    streets <- get_streets_pbf_data(pbf_file_name, geo_clip_file_path)
+    barriers <- get_barrier_pbf_data(pbf_file_name, geo_clip_file_path)
+  } else if (source == "postgis") {
+    streets <- get_streets_pg_data()
+  }
   
   # filter streets -------------------------------------------------
   
@@ -96,8 +169,8 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
   streets <- streets %>%
     filter(
       highway != "proposed", # street doesnt exist yet
-      (motorroad != "yes") | is.na(motorroad), # no motorroad
-      !bicycle %in% c("no", "private") | is.na(bicycle), # bikes not allowed
+      ! motorroad  %in% "yes", # no motorroad
+      #!bicycle %in% c("no", "private") | is.na(bicycle), # bikes not allowed
       (!access %in% c( # special purpose access not allowed for bikes - except they are explicitly allowed
         "agricultural", "customers", "delivery", "private",
         "permit", "bus", "public_transport", "emergency", "forestry" # destination (Anlieger frei?)
@@ -126,9 +199,6 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
   combined_barriers <- c()
   
   for(i in c(1:nrow(sub_regions))){
-    tic()
-    print(i)
-    
     streets_region <- streets[streets_sub_regions[i,], ] 
     if(nrow(streets_region) > 0) {
       
@@ -139,7 +209,7 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
       
       barriers_region$on_street <- colSums(street_barrier_intersection) > 0
       
-      reduced_barriers <- barriers_region[, c("barrier", "maxwidth_barriers_combined", "kerb", "height_cleaned")] %>% st_drop_geometry()
+      reduced_barriers <- barriers_region[, c("barrier", "maxwidth_barriers_combined", "kerb", "height")] %>% st_drop_geometry()
       dummy_barriers <- tibble("n_block" = 0, "n_bollard" = 0, "n_cycle_barrier" = 0, "n_kerb" = 0, "n_lift_gate" = 0, "n_traffic_calming" = 0,
                                "maxwidth_block" = NA, "maxwidth_bollard" = NA, "maxwidth_cycle_barrier" = NA, "maxwidth_lift_gate" = NA, 
                                "maxwidth_traffic_calming" = NA, "kerb" = NA, "kerb_height" = NA)
@@ -154,7 +224,7 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
           summarise(n = n(),
                     maxwidth = min(maxwidth_barriers_combined),
                     kerb = max(kerb),
-                    kerb_height = max(height_cleaned)) %>% 
+                    kerb_height = max(height)) %>% 
           mutate(
             kerb = as.character(kerb),
             kerb = case_when(
@@ -183,9 +253,10 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
       barriers_on_streets <- lapply(barrier_ids_by_street, create_barrier_count)
       
       # join barrier info back to streets table
-      combined_streets <- rbind(combined_streets, cbind(streets_region, rbindlist(barriers_on_streets)))
-      combined_barriers <- rbind(combined_barriers, barriers_region)
-      toc()
+      if(length(barriers_on_streets) > 0) {
+        combined_streets <- rbind(combined_streets, cbind(streets_region, rbindlist(barriers_on_streets)))
+        combined_barriers <- rbind(combined_barriers, barriers_region)
+      }
     }
   }
 
@@ -197,75 +268,103 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
   
   # split and duplicate right and left cycleway -------------------------------------------
   
-  # split all streets that have a cycleway at least on one side of the road i
-  split_streets <- (!is.na(streets$cycleway_right) |
-                      !is.na(streets$cycleway_left)) |
-    !is.na(streets$bicycle_lanes_forward) |
-    !is.na(streets$bicycle_lanes_backward) |
-    !is.na(streets$cycleway) & (!streets$oneway %in% "yes") | # only cylceway (without right / left specification) and not oneway
-    !is.na(streets$cycleway_both) # cyclway:both
+  # split all streets that have a cycleway at least on one side of the road
+  split_streets <- (( streets$cycleway_right %in% cycleway_options) |
+                       ( streets$cycleway_left %in% cycleway_options)) |
+    (!is.na(streets$bicycle_lanes_forward) |
+       !is.na(streets$bicycle_lanes_backward)) |
+    ( streets$cycleway %in% cycleway_options & (!streets$oneway %in% c("yes"))) | # only cylceway (without right / left specification) and not oneway
+    ( streets$cycleway_both %in% cycleway_options) # cyclway:both
   
   ### all cycleways "left" or "backward"
-  only_left <- streets %>%
-    filter(split_streets | !is.na(cycleway_left) | !is.na(bicycle_lanes_backward)) %>%
+  only_left <- streets[split_streets, ] %>%
+    filter( cycleway_left %in% cycleway_options| 
+              cycleway %in% cycleway_options | 
+              cycleway_both %in% cycleway_options | 
+              cycleway_left %in% cycleway_options |
+              !is.na(bicycle_lanes_backward)) %>% 
     mutate( # remove information all information for "right" or "forward"
       direction = "backward",
       cycleway_right = NA,
       cycleway_right_surface = NA,
       cycleway_right_smoothness = NA,
       cycleway_right_width = NA,
-      cycleway_right_width_cleaned = NA,
       cycleway_right_oneway = NA,
       bicycle_lanes_forward = NA,
       width_lanes_forward = NA
-    ) %>%
-    st_transform(3035)
-  start_points_left <- st_line_sample(st_geometry(only_left), sample = 0)
-  end_points_left <- st_line_sample(only_left, sample = 1)
-  diff_l <- (end_points_left - start_points_left) %>%
-    st_coordinates() %>%
-    as_tibble() %>%
-    mutate(
-      north = ifelse(X > 5, 3, 0), # shift north if line goes east
-      east = ifelse(Y < -5, 3, 0)
-    ) # shift east if line goes south
-  new_geo_l <- c()
-  for (i in 1:nrow(only_left)) {
-    new_geo_l <- c(new_geo_l, st_geometry(only_left[i, ]) + c(diff_l[i, ]$east, diff_l[i, ]$north))
-  }
-  st_geometry(only_left) <- st_sfc(new_geo_l, crs = 3035)
+    ) 
   
   ### all cycleways "right" or "forward"
-  only_right <- streets %>%
-    filter(split_streets | !is.na(cycleway_right) | !is.na(bicycle_lanes_forward)) %>%
+  only_right <- streets[split_streets, ] %>%
+    filter( cycleway_right %in% cycleway_options| 
+              cycleway %in% cycleway_options | 
+              cycleway_both %in% cycleway_options | 
+              cycleway_left %in% cycleway_options |
+              !is.na(bicycle_lanes_forward)) %>% 
     mutate(
       direction = "forward",
       cycleway_left = NA,
       cycleway_left_surface = NA,
       cycleway_left_smoothness = NA,
       cycleway_left_width = NA,
-      cycleway_left_width_cleaned = NA,
       cycleway_left_oneway = NA,
       bicycle_lanes_backward = NA,
       width_lanes_backward = NA
-    ) %>%
-    st_transform(3035)
-  start_points_right <- st_line_sample(st_geometry(only_right), sample = 0)
-  end_points_right <- st_line_sample(only_right, sample = 1)
-  diff_r <- (end_points_right - start_points_right) %>%
-    st_coordinates() %>%
-    as_tibble() %>%
-    mutate(
-      north = ifelse(X < -5, 3, 0), # shift north if line goes west
-      east = ifelse(Y > 5, 3, 0)
-    ) # shift east if line goes north
-  new_geo_r <- c()
+    ) 
   
-  # takes 86 sec for Ba-Wü
-  for (i in 1:nrow(only_right)) {
-    new_geo_r <- c(new_geo_r, st_geometry(only_right[i, ]) + c(diff_r[i, ]$east, diff_r[i, ]$north))
+  shift_left <- function(only_left) {
+    only_left <- only_left %>% 
+      st_transform(3035)
+    
+    start_points_left <- st_line_sample(st_geometry(only_left), sample = 0)
+    end_points_left <- st_line_sample(only_left, sample = 1)
+    diff_l <- (end_points_left - start_points_left) %>%
+      st_coordinates() %>%
+      as_tibble() %>%
+      mutate(
+        north = ifelse(X > 5, 3, 0), # shift north if line goes east
+        east = ifelse(Y < -5, 3, 0)
+      ) # shift east if line goes south
+    new_geo_l <- c()
+    for (i in 1:nrow(only_left)) {
+      new_geo_l <- c(new_geo_l, st_geometry(only_left[i, ]) + c(diff_l[i, ]$east, diff_l[i, ]$north))
+    }
+    st_geometry(only_left) <- st_sfc(new_geo_l, crs = 3035)
+    only_left <- st_transform(only_left, 4326)
+    
+    return(only_left)
   }
-  st_geometry(only_right) <- st_sfc(new_geo_r, crs = 3035)
+  
+  shift_right <- function(only_right) {
+    only_right <- only_right %>% 
+      st_transform(3035)
+    
+    start_points_right <- st_line_sample(st_geometry(only_right), sample = 0)
+    end_points_right <- st_line_sample(only_right, sample = 1)
+    diff_r <- (end_points_right - start_points_right) %>%
+      st_coordinates() %>%
+      as_tibble() %>%
+      mutate(
+        north = ifelse(X < -5, 3, 0), # shift north if line goes west
+        east = ifelse(Y > 5, 3, 0)
+      ) # shift east if line goes north
+    new_geo_r <- c()
+    
+    # takes 86 sec for Ba-Wü
+    for (i in 1:nrow(only_right)) {
+      new_geo_r <- c(new_geo_r, st_geometry(only_right[i, ]) + c(diff_r[i, ]$east, diff_r[i, ]$north))
+    }
+    st_geometry(only_right) <- st_sfc(new_geo_r, crs = 3035)
+    only_right <- st_transform(only_right, 4326)
+    
+    
+    return(only_right)
+  }
+  
+  if(with_line_shift){
+    only_left <- shift_left(only_left)
+    only_right <- shift_right(only_right)
+  }
   
   # join split right and left cycleways back with other streets
   streets <- streets %>%
@@ -273,14 +372,14 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     filter(!osm_id %in% (c(only_right$osm_id, only_left$osm_id))) %>%
     mutate(direction = "both") %>% 
     # bind new left cycleways
-    rbind(st_transform(only_left, 4326)) %>%
+    rbind(only_left) %>%
     # bind new right cycleways
-    rbind(st_transform(only_right, 4326)) %>%
+    rbind(only_right) %>%
     mutate(
       bicycle_lanes_combined = coalesce(bicycle_lanes_forward, bicycle_lanes_backward, bicycle_lanes),
       width_lanes_combined = coalesce(width_lanes_forward, width_lanes_backward, width_lanes)
     )
-  
+
   
   # combine different width tagging schemes into single column -------------------------------------------
   
@@ -299,8 +398,8 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
       cycleway_combined = coalesce(cycleway_right, cycleway_left, cycleway, cycleway_both),
       cycleway_width_combined = coalesce(
         cycleway_width_extracted,
-        cycleway_right_width_cleaned, cycleway_left_width_cleaned,
-        cycleway_width_cleaned, cycleway_both_width_cleaned
+        cycleway_right_width, cycleway_left_width,
+        cycleway_width, cycleway_both_width
       ),
       cycleway_oneway_combined = coalesce(
         cycleway_right_oneway, cycleway_left_oneway, cycleway_oneway, cycleway_both_oneway
@@ -308,7 +407,7 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
     )
   
   streets[streets$highway == "cycleway", ]$cycleway_combined <- "track"
-  streets[streets$highway == "cycleway", ]$cycleway_width_combined <- streets[streets$highway == "cycleway", ]$width_cleaned
+  streets[streets$highway == "cycleway", ]$cycleway_width_combined <- streets[streets$highway == "cycleway", ]$width
   streets[streets$highway == "cycleway", ]$cycleway_oneway_combined <- streets[streets$highway == "cycleway", ]$oneway
   
   # combine all surface tagging schemes into single column ------------------
@@ -385,10 +484,10 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
         cycleway_width_combined < 2.4 & cycleway_oneway_combined == "no" ~ 1,
         cycleway_width_combined >= 2 & cycleway_combined %in% c("track", "lane") ~ 5,
         cycleway_width_combined >= 1.6 & cycleway_width_combined <= 2 & cycleway_combined %in% c("track", "lane") ~ 4,
-        cycleway_width_combined >= 1.2 & width_cleaned <= 1.6 & cycleway_combined == "lane" ~ 4,
-        cycleway_width_combined >= 1.2 & width_cleaned <= 1.6 & cycleway_combined == "track" ~ 3, # schmalerer track schlechter als schmale lane
-        width_cleaned < 1.2 & cycleway_combined == "lane" ~ 2,
-        width_cleaned < 1.2 & cycleway_combined == "track" ~ 1,
+        cycleway_width_combined >= 1.2 & cycleway_width_combined <= 1.6 & cycleway_combined == "lane" ~ 4,
+        cycleway_width_combined >= 1.2 & cycleway_width_combined <= 1.6 & cycleway_combined == "track" ~ 3, # schmalerer track schlechter als schmale lane
+        cycleway_width_combined < 1.2 & cycleway_combined == "lane" ~ 2,
+        cycleway_width_combined < 1.2 & cycleway_combined == "track" ~ 1,
         cycleway_combined == "lane" ~ 4,
         cycleway_combined == "track" ~ 3,
         cycleway_combined == "opposite_lane" ~ 5, # eigene Spur für Gegenrichtung in Einbahnstraße
@@ -486,10 +585,10 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
           (segregated != "yes") & (!bicycle %in% c("yes", "permissive", "designated")) ~ 0.2 # dismount bike
       ),
       car_traffic = case_when(
-        is.na(cycleway_combined) & highway %in% c("primary", "primary_link", "trunk", "trunk_link") & !bicycle %in% c("no") ~ 0.2,
-        is.na(cycleway_combined) & highway %in% c("secondary", "secondary_link") & !bicycle %in% c("no") ~ 0.4,
-        is.na(cycleway_combined) & highway %in% c("tertiary", "tertiary_link", "road", "unclassified") & !bicycle %in% c("no") ~ 0.6,
-        is.na(cycleway_combined) & highway %in% c("living_street", "residential") & !bicycle %in% c("no") ~ 0.8,
+        (! cycleway_combined %in% cycleway_options) & highway %in% c("primary", "primary_link", "trunk", "trunk_link") & !bicycle %in% c("no") ~ 0.2,
+        (! cycleway_combined %in% cycleway_options) & highway %in% c("secondary", "secondary_link") & !bicycle %in% c("no") ~ 0.4,
+        (! cycleway_combined %in% cycleway_options) & highway %in% c("tertiary", "tertiary_link", "road", "unclassified") & !bicycle %in% c("no") ~ 0.6,
+        (! cycleway_combined %in% cycleway_options) & highway %in% c("living_street", "residential") & !bicycle %in% c("no") ~ 0.8,
       )
     )
   
@@ -520,22 +619,27 @@ streets_data <- function(pbf_file_name = "Baden-Württemberg", geo_clip_file_pat
                        maxspeed, bicycle_road, segregated, dismount_necessary),
               barriers %>% 
                 filter(on_street) %>% 
-                select(barrier, maxwidth_barriers_combined, kerb, height_cleaned)))
+                select(barrier, maxwidth_barriers_combined, kerb, height)))
 }
 
 pedestrian_traffic_data <- function(pbf_file_name, geo_clip_file_path) {
   ## pedestrian traffic
-  markets <- oe_get(
-    pbf_file_name,
-    # force_download = T,
-    # force_vectortranslate = TRUE,
-    # quiet = T,
-    stringsAsFactors = F,
-    max_file_size = 1000000000, # ~ 1GB - default is too small
-    extra_tags = c("opening_hours", "amenity"),
-    layer = "points",
-    query = "SELECT * FROM 'points' WHERE  amenity = 'marketplace'"
-  )
+  # markets <- oe_get(
+  #   pbf_file_name,
+  #   # force_download = T,
+  #   # force_vectortranslate = TRUE,
+  #   # quiet = T,
+  #   stringsAsFactors = F,
+  #   max_file_size = 1000000000, # ~ 1GB - default is too small
+  #   extra_tags = c("opening_hours", "amenity"),
+  #   layer = "points",
+  #   query = "SELECT * FROM 'points' WHERE  amenity = 'marketplace'"
+  # )
+  # 
+  markets <- oe_read(here("data", "berlin-latest.osm.pbf"),
+                     stringsAsFactors = F,
+                     extra_tags = c("opening_hours", "amenity"),
+                     query = "SELECT * FROM 'points' WHERE  amenity = 'marketplace'")
   
   if (!is.na(geo_clip_file_path) & geo_clip_file_path != "") {
     geo_selection <- read_sf(geo_clip_file_path)
@@ -554,7 +658,7 @@ pedestrian_traffic_data <- function(pbf_file_name, geo_clip_file_path) {
   #   query = "SELECT * FROM 'multipolygons'"
   # )
   
-  return (markets)
+  return (select(markets, name, opening_hours))
 }
 
 car_traffic_data <- function() {
